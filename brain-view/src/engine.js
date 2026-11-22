@@ -35,7 +35,7 @@
 precision highp float;
 precision highp int;
 uniform mat4 uVP;
-uniform float uForm, uSpread, uClusMix, uIntro, uGalaxy;
+uniform float uForm, uSpread, uClusMix, uIntro, uGalaxy, uOrrery;
 vec3 morph(vec3 anat, vec3 clus, vec3 gdir, float st, vec3 nd, float turb, out float e) {
   vec3 a = anat + gdir * uSpread;
   vec3 c = clus * (1.0 + uSpread * 0.85);
@@ -52,6 +52,14 @@ vec3 galaxy(vec3 p, vec3 gal, float st, vec3 nd, out float eg) {
   vec3 q = mix(p, gal, eg);
   q += nd * 0.2 * sin(3.14159265 * eg);
   return q;
+}
+// fourth form: an orrery — every note is a bead on its group's planet
+vec3 orrery(vec3 p, vec3 tgt, float st, vec3 nd, out float eo) {
+  float f = clamp((uOrrery - st * 0.4) / 0.6, 0.0, 1.0);
+  eo = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec3 q = mix(p, tgt, eo);
+  q += nd * 0.24 * sin(3.14159265 * eo);
+  return q;
 }`;
 
   const POINT_VS = COMMON + `
@@ -67,6 +75,7 @@ layout(location=8) in float aSize;
 layout(location=9) in vec3 aGal;
 layout(location=10) in vec3 aGalPrev;
 uniform sampler2D uNoteTex;
+uniform highp sampler2D uOrrTex, uOrrPrev;
 uniform int uTexW, uTexH, uColorMode, uPick;
 uniform vec3 uColor;
 uniform float uTime, uPx, uPointSize, uRefDist, uShowBody, uShowNotes, uBriBody, uBriNotes, uDim, uHover, uSel, uFiltered;
@@ -92,6 +101,12 @@ void main() {
   vec3 p = morph(aAnat, clus, aGroupDir, aRand.x, nd, 0.10 + 0.24 * aRand.w, e);
   float eg;
   p = galaxy(p, mix(aGalPrev, aGal, uClusMix), aRand.z, nd, eg);
+  float eo = 0.0;
+  if (uOrrery > 0.0) {       // flow into this note's bead
+    ivec2 tc = ivec2(id % uTexW, id / uTexW);
+    vec4 ot = mix(texelFetch(uOrrPrev, tc, 0), texelFetch(uOrrTex, tc, 0), uClusMix);
+    p = orrery(p, ot.xyz + nd * ot.w * aRand.w, aRand.y, nd, eo);
+  }
   // intro: spine draws downward, nerves grow outward, brain inflates from the stem
   float dur = kind < 0.5 || kind > 3.5 ? 0.46 : (abs(kind - 1.0) < 0.5 ? 0.10 : (abs(kind - 3.0) < 0.5 ? 0.40 : 0.36));
   float k = clamp((uIntro - aMeta.w) / dur, 0.0, 1.0);
@@ -102,7 +117,7 @@ void main() {
   float size = uPx * aSize * (abs(kind - 3.0) < 0.5 ? 4.2 : 1.0) * uPointSize * (uRefDist / max(gl_Position.w, 0.1)) * (1.0 - 0.22 * eg);
   bool hot = (abs(aNote - uHover) < 0.5 || abs(aNote - uSel) < 0.5);
   if (uPick == 1) {
-    if (show < 0.5 || lit < 0.5 || k < 0.99) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 1.0; }
+    if (show < 0.5 || lit < 0.5 || k < 0.99 || uOrrery > 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 1.0; }
     else gl_PointSize = max(size * 1.6, 5.0);
     int c = id + 1;
     vColor = vec4(float(c & 255) / 255.0, float((c >> 8) & 255) / 255.0, float((c >> 16) & 255) / 255.0, 1.0);
@@ -117,11 +132,12 @@ void main() {
     vec3 gcol = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW + uTexH), 0).rgb;
     tint = mix(tint, gcol, eg); white *= 1.0 - 0.8 * eg;
   }
+  if (eo > 0.0) { tint = mix(tint, vec3(0.74, 0.72, 1.0), eo * 0.85); white *= 1.0 - eo; }
   vec3 col = mix(tint, vec3(1.0), white);
   if (body) { float g = dot(col, vec3(0.45)); col = mix(vec3(g), col, smoothstep(1.42, 1.85, uIntro)); }
   float gain = kind < 0.5 ? 0.40 : kind < 1.5 ? 0.46 : kind < 2.5 ? 0.48 : kind < 3.5 ? 0.062 : kind < 4.5 ? 0.30 : 0.40;
   float I = aMeta.z * gain * (body ? uBriBody : uBriNotes) * show * k;
-  I *= mix(uDim, 1.0 + 0.22 * uFiltered, lit);
+  I *= mix(uDim, 1.0 + 0.22 * uFiltered, lit) * (1.0 - eo * eo * eo);
   I *= 0.86 + 0.14 * sin(uTime * (1.3 + aRand.y * 2.2) + aRand.z * 40.0);
   if (hot) { I = max(I, 0.5) * (1.0 + 1.6 * (1.0 - 0.8 * eg)); col = mix(col, vec3(1.0), 0.45 * (1.0 - eg)); size *= 1.0 + 0.55 * (1.0 - eg); }
   if (size < 1.0) { I *= size * size; size = 1.0; }
@@ -183,9 +199,11 @@ layout(location=9) in vec3 aGal;
 layout(location=10) in vec3 aGalPrev;
 layout(location=11) in vec2 aStar;   // size, seed
 uniform sampler2D uNoteTex;
+uniform highp sampler2D uOrrTex, uOrrPrev;
 uniform int uTexW, uTexH, uPick;
-uniform float uTime, uPx, uPointSize, uRefDist, uDim, uShowNotes, uHover, uSel;
+uniform float uTime, uPx, uPointSize, uRefDist, uDim, uShowNotes, uHover, uSel, uPxPerUnit;
 out vec4 vColor;
+out float vStyle;
 void main() {
   int id = int(aNote + 0.5);
   vec4 nt = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW), 0);
@@ -193,13 +211,23 @@ void main() {
   float e, eg;
   vec3 p = morph(aAnat, mix(aClusPrev, aClus, uClusMix), aGroupDir, 0.5, vec3(0.0), 0.0, e);
   p = galaxy(p, mix(aGalPrev, aGal, uClusMix), aStar.y, vec3(0.0), eg);
+  float eo = 0.0, orad = 0.0;
+  if (uOrrery > 0.0) {
+    ivec2 tc = ivec2(id % uTexW, id / uTexW);
+    vec4 ot = mix(texelFetch(uOrrPrev, tc, 0), texelFetch(uOrrTex, tc, 0), uClusMix);
+    p = orrery(p, ot.xyz, aStar.y, vec3(0.0), eo); orad = ot.w;
+  }
   gl_Position = uVP * vec4(p, 1.0);
-  float vis = smoothstep(0.18, 0.85, uGalaxy) * uShowNotes;
+  float visO = smoothstep(0.3, 0.92, uOrrery);
+  float vis = max(smoothstep(0.18, 0.85, uGalaxy) * (1.0 - visO), visO) * uShowNotes;
+  vStyle = visO;
   bool hot = (abs(aNote - uHover) < 0.5 || abs(aNote - uSel) < 0.5);
-  float size = uPx * aStar.x * (0.6 + 0.4 * uPointSize) * (uRefDist / max(gl_Position.w, 0.1)) * (hot ? 1.5 : 1.0);
+  float sizeG = uPx * aStar.x * (0.6 + 0.4 * uPointSize) * (uRefDist / max(gl_Position.w, 0.1));
+  float sizeO = max(2.0 * orad * (0.75 + 0.25 * uPointSize) * uPxPerUnit / max(gl_Position.w, 0.1), 2.2);
+  float size = mix(sizeG, sizeO, visO) * (hot ? 1.5 : 1.0);
   if (uPick == 1) {
     if (vis < 0.5 || nt.a < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 1.0; }
-    else { gl_PointSize = max(size * 0.55, 7.0); gl_Position.z -= 0.03 * gl_Position.w; }
+    else { gl_PointSize = max(size * mix(0.55, 0.62, visO), 7.0); gl_Position.z -= 0.03 * gl_Position.w; }
     int c = id + 1;
     vColor = vec4(float(c & 255) / 255.0, float((c >> 8) & 255) / 255.0, float((c >> 16) & 255) / 255.0, 1.0);
     return;
@@ -212,16 +240,53 @@ void main() {
 precision highp float;
 precision highp int;
 uniform int uPick;
-in vec4 vColor; out vec4 o;
+in vec4 vColor; in float vStyle; out vec4 o;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c) * 2.0;
   if (uPick == 1) { if (d > 1.0) discard; o = vColor; return; }
   float core = exp(-d * d * 30.0);
   float halo = exp(-d * d * 6.5) * 0.62 + exp(-d * d * 2.0) * 0.16;
-  vec3 col = vColor.rgb * (halo + core * 0.5) + vec3(1.0) * core * 1.15;
-  o = vec4(col * vColor.a * smoothstep(1.0, 0.72, d), 1.0);
+  vec3 glow = (vColor.rgb * (halo + core * 0.5) + vec3(1.0) * core * 1.15) * smoothstep(1.0, 0.72, d);
+  // orrery: a small lit sphere
+  vec3 n = vec3(c.x * 2.0, -c.y * 2.0, sqrt(max(0.0, 1.0 - d * d)));
+  float diff = max(dot(n, vec3(-0.42, 0.56, 0.71)), 0.0);
+  vec3 base = mix(vec3(0.73, 0.71, 1.0), vColor.rgb, 0.24);
+  vec3 bead = (base * (0.14 + 0.68 * diff) + vec3(1.0) * pow(diff, 22.0) * 0.28) * smoothstep(1.0, 0.9, d);
+  o = vec4(mix(glow, bead, vStyle) * vColor.a, 1.0);
 }`;
+  // orrery decor: rings, cage, fans, beams, crystal, link threads (position + colour + (t, seed))
+  const DECO_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 aP;
+layout(location=1) in vec4 aC;
+layout(location=2) in vec2 aT;
+uniform mat4 uVP, uModel;
+uniform float uAlpha, uGrow, uTime, uFlow;
+out vec4 vC;
+void main() {
+  gl_Position = uVP * (uModel * vec4(aP, 1.0));
+  float m = uGrow > 8.0 ? 1.0 : smoothstep(uGrow, uGrow - 0.16, aT.x);
+  float sh = 1.0 - uFlow * (0.3 + 0.3 * sin(uTime * 1.6 - aT.x * 7.0 + aT.y * 40.0));
+  vC = vec4(aC.rgb, aC.a * uAlpha * m * sh);
+}`;
+  const DECO_FS = `#version 300 es
+precision highp float; in vec4 vC; out vec4 o; void main() { o = vec4(vC.rgb * vC.a, 1.0); }`;
+  const GLOW_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 aP;
+layout(location=1) in vec4 aC;
+layout(location=2) in float aS;
+uniform mat4 uVP; uniform float uPxPerUnit, uAlpha;
+out vec4 vC;
+void main() {
+  gl_Position = uVP * vec4(aP, 1.0);
+  gl_PointSize = max(1.5, aS * uPxPerUnit / max(gl_Position.w, 0.1));
+  vC = vec4(aC.rgb, aC.a * uAlpha);
+}`;
+  const GLOW_FS = `#version 300 es
+precision highp float; in vec4 vC; out vec4 o;
+void main() { float d = length(gl_PointCoord - 0.5) * 2.0; float a = exp(-d * d * 4.2) * smoothstep(1.0, 0.75, d); o = vec4(vC.rgb * vC.a * a, 1.0); }`;
   const FIELD_VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec4 aP;
@@ -465,9 +530,89 @@ void main() {
     const litCur = new Float32Array(NN).fill(1), litTgt = new Float32Array(NN).fill(1);
     let texDirty = true, litAnimating = false, filtered = 0;
 
+    // ---------- orrery resources ----------
+    const ORBIT_R = 2.46;
+    const orr = { active: [], arcsDirty: true, grow: -0.2, toLink: 0, was: false };
+    const orrData = new Float32Array(TW * TH * 4), orrPrev = new Float32Array(TW * TH * 4);   // per note: bead xyz + radius
+    function floatTex() {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TW, TH, 0, gl.RGBA, gl.FLOAT, orrData); return t;
+    }
+    const orrTex = floatTex(), orrPrevTex = floatTex();
+    const upTex = (t, d) => { gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TW, TH, 0, gl.RGBA, gl.FLOAT, d); };
+    function decoVao() {
+      const v = gl.createVertexArray(), b = gl.createBuffer(); gl.bindVertexArray(v); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 36, 12);
+      gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 36, 28);
+      gl.bindVertexArray(null); return { v, b, n: 0 };
+    }
+    function decoData(D, arr, usage) { gl.bindBuffer(gl.ARRAY_BUFFER, D.b); gl.bufferData(gl.ARRAY_BUFFER, arr instanceof Float32Array ? arr : new Float32Array(arr), usage || gl.STATIC_DRAW); D.n = arr.length / 9; }
+    const dStatic = decoVao(), dArcs = decoVao(), dHot = decoVao(), dDyn = decoVao(), dCrysL = decoVao(), dCrysT = decoVao(), dGemL = decoVao(), dGemT = decoVao();
+    (function meshes() {
+      const L = [], T = [];
+      const rot = (q, ax, ay) => { let x = q[0], y = q[1], z = q[2]; let c = Math.cos(ay), s2 = Math.sin(ay); const x2 = x * c + z * s2; z = -x * s2 + z * c; x = x2; c = Math.cos(ax); s2 = Math.sin(ax); const y2 = y * c - z * s2; z = y * s2 + z * c; y = y2; return [x, y, z]; };
+      const cube = (h, ax, ay, lc, fc) => {
+        const V = []; for (let i = 0; i < 8; i++) V.push(rot([(i & 1 ? h : -h), (i & 2 ? h : -h), (i & 4 ? h : -h)], ax, ay));
+        for (const e of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) L.push(V[e[0]][0], V[e[0]][1], V[e[0]][2], lc[0], lc[1], lc[2], lc[3], 0, 0, V[e[1]][0], V[e[1]][1], V[e[1]][2], lc[0], lc[1], lc[2], lc[3], 0, 0);
+        for (const f of [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]]) for (const k of [0, 1, 2, 0, 2, 3]) T.push(V[f[k]][0], V[f[k]][1], V[f[k]][2], fc[0], fc[1], fc[2], fc[3], 0, 0);
+      };
+      cube(0.5, 0, 0, [1, 0.8, 0.88, 0.8], [1, 0.42, 0.6, 0.085]);
+      cube(0.36, 0.62, 0.78, [1, 0.62, 0.74, 0.65], [1, 0.3, 0.46, 0.11]);
+      cube(0.2, 1.1, 0.3, [1, 0.5, 0.52, 0.9], [1, 0.2, 0.22, 0.34]);
+      decoData(dCrysL, L); decoData(dCrysT, T);
+      const GL2 = [], GT = [], top = [0, 0.66, 0], bot = [0, -0.66, 0], eq = [[0.44, 0, 0], [0, 0, 0.44], [-0.44, 0, 0], [0, 0, -0.44]];
+      const tri = (a, b, c, col) => { for (const q of [a, b, c]) GT.push(q[0], q[1], q[2], col[0], col[1], col[2], col[3], 0, 0); };
+      const ln = (a, b) => GL2.push(a[0], a[1], a[2], 1, 0.9, 1, 0.55, 0, 0, b[0], b[1], b[2], 1, 0.9, 1, 0.55, 0, 0);
+      for (let i = 0; i < 4; i++) { const a = eq[i], b = eq[(i + 1) % 4];
+        tri(top, a, b, i % 2 ? [1, 0.82, 0.95, 0.6] : [1, 0.62, 0.9, 0.45]); tri(bot, a, b, i % 2 ? [0.78, 0.3, 0.95, 0.5] : [0.6, 0.22, 0.9, 0.4]);
+        ln(top, a); ln(bot, a); ln(a, b); }
+      decoData(dGemL, GL2); decoData(dGemT, GT);
+    })();
+    const gvao = gl.createVertexArray(), gbuf = gl.createBuffer();
+    gl.bindVertexArray(gvao); gl.bindBuffer(gl.ARRAY_BUFFER, gbuf);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 32, 28);
+    gl.bindVertexArray(null);
+    function model(tx, ty, tz, ry, rx, sc) {
+      const cy = Math.cos(ry), sy = Math.sin(ry), cx = Math.cos(rx), sx = Math.sin(rx);
+      return new Float32Array([cy * sc, 0, -sy * sc, 0, sy * sx * sc, cx * sc, cy * sx * sc, 0, sy * cx * sc, -sx * sc, cy * cx * sc, 0, tx, ty, tz, 1]);
+    }
+    const IDENT = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const beadOf = (n) => [orrData[n * 4], orrData[n * 4 + 1], orrData[n * 4 + 2]];
+    function arc(out, A, B, col, seed, segs, vol) {     // quadratic curve bowed away from the core
+      const mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2, mz = (A[2] + B[2]) / 2, len = Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]);
+      let ox = mx + (seed - 0.5) * 0.3, oy = my - TARGET_Y + 0.1 + ((seed * 7.3) % 1 - 0.5) * 0.6, oz = mz + ((seed * 3.7) % 1 - 0.5) * 0.3; const ol = Math.hypot(ox, oy, oz) || 1;
+      let k = (0.14 + 0.5 * len) * (0.5 + 0.95 * ((seed * 13.1) % 1));
+      if (vol) {      // threads loop well above and below the plane so that together they fill a sphere
+        const sg = ((seed * 29.7) % 1) < 0.5 ? -1 : 1;
+        ox = mx * 0.55 + ((seed * 5.9) % 1 - 0.5) * 0.7; oy = sg * (0.55 + 1.0 * ((seed * 17.3) % 1)); oz = mz * 0.55 + ((seed * 11.3) % 1 - 0.5) * 0.7;
+        k = (0.3 + 0.8 * len) * (0.4 + 1.05 * ((seed * 13.1) % 1));
+      }
+      const ol2 = Math.hypot(ox, oy, oz) || 1;
+      const cx = mx + ox / ol2 * k, cy = my + oy / ol2 * k, cz = mz + oz / ol2 * k;
+      let px = A[0], py = A[1], pz = A[2];
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs, u = 1 - t, x = u * u * A[0] + 2 * u * t * cx + t * t * B[0], y = u * u * A[1] + 2 * u * t * cy + t * t * B[1], z = u * u * A[2] + 2 * u * t * cz + t * t * B[2];
+        out.push(px, py, pz, col[0], col[1], col[2], col[3], (i - 1) / segs, seed, x, y, z, col[0], col[1], col[2], col[3], t, seed); px = x; py = y; pz = z;
+      }
+    }
+    function buildArcs() {      // golden threads: one curve per link, growing outward from the core
+      const out = [], dc = (q) => Math.hypot(q[0], q[1] - TARGET_Y, q[2]);
+      for (let v = 0; v < NL; v += 2) {
+        let A = beadOf(linkPairs[v]), B = beadOf(linkPairs[v + 1]); if (dc(A) > dc(B)) { const t = A; A = B; B = t; }
+        arc(out, A, B, [1.0, 0.6, 0.18, 0.14], (v * 0.61803398875) % 1, 14, true);
+      }
+      decoData(dArcs, out); orr.arcsDirty = false;
+    }
+
     // ---------- programs ----------
     const pPoint = program(gl, POINT_VS, POINT_FS), pLine = program(gl, LINE_VS, LINE_FS);
     const pStar = program(gl, STAR_VS, STAR_FS), pField = program(gl, FIELD_VS, FIELD_FS);
+    const pDeco = program(gl, DECO_VS, DECO_FS), pGlow = program(gl, GLOW_VS, GLOW_FS);
     const pDown = program(gl, QUAD_VS, DOWN_FS), pBlur = program(gl, QUAD_VS, BLUR_FS), pComp = program(gl, QUAD_VS, COMP_FS);
 
     // ---------- render targets ----------
@@ -506,16 +651,18 @@ void main() {
 
     // ---------- state ----------
     const S = {
-      form: 0, formTarget: 0, spread: 0, spreadTarget: 0, clusMix: 1, galaxy: 0, galaxyTarget: 0, galaxyLin: 0,
+      form: 0, formTarget: 0, spread: 0, spreadTarget: 0, clusMix: 1, galaxy: 0, galaxyTarget: 0, galaxyLin: 0, orrery: 0, orreryTarget: 0, beams: 1, gemAng: 0,
       colorMode: 0, color: hexToRgb(opts.color || '#FF3B30'), colorTarget: hexToRgb(opts.color || '#FF3B30'),
       clusterBy: 'folder', showBody: 1, showNotes: 1, showLinks: 0, turning: 1, speed: 1, pointSize: 1, glow: 1,
       briBody: 1, briNotes: 1, dim: 0.05, hover: -1, sel: -1,
       yaw: 0, pitch: 0, dist: 4.92, distTarget: 4.92, yawVel: 0, pitchVel: 0, dragging: false,
       t0: performance.now(), intro: 0, introDone: false, time: 0
     };
+    const oEase = () => { const f = clamp((S.orrery - 0.2) / 0.6, 0, 1); return f * f * f * (f * (f * 6 - 15) + 10); };
     const TARGET_Y = 0.10, FOV = 35 * Math.PI / 180, OMEGA = (2 * Math.PI) / 16;
     function fitDist() {
-      const gx = S.galaxy, th = Math.tan(FOV / 2), dh = (lerp(2.81, 3.05, gx) / 0.88) / (2 * th), dw = (lerp(1.62, 4.6, gx) / 0.86) / (2 * th * (cssW / cssH));
+      const gx = S.galaxy, ox = oEase(), th = Math.tan(FOV / 2);
+      const dh = (lerp(lerp(2.81, 3.05, gx), 5.1, ox) / 0.88) / (2 * th), dw = (lerp(lerp(1.62, 4.6, gx), 5.4, ox) / 0.86) / (2 * th * (cssW / cssH));
       return Math.max(dh, dw);
     }
     let baseDist = 4.92, zoom = 1, zoomTarget = 1;
@@ -606,7 +753,7 @@ void main() {
         Gp.gcol = Gp.color ? hexToRgb(Gp.color) : hue(i);
         // the best-linked note is the hub at the core; the rest spread through the disc, well-linked ones closer in
         const m = members[i].slice().sort((a, b) => degree[b] - degree[a] || a - b);
-        Gp.hub = m[0]; Gp.top = m.slice(0, 3);
+        Gp.hub = m[0]; Gp.top = m.slice(0, 3); Gp.m = m;
         m.forEach((n, q) => {
           let rr = 0, th = 0, h = 0;
           if (q > 0) { rr = rad * (0.15 + 0.62 * Math.sqrt(q / m.length)) * (1 + 0.07 * clamp(nj[n * 3], -2, 2)); th = q * 2.399963229728653 + 0.35 * nj[n * 3 + 1]; h = nj[n * 3 + 2] * rad * 0.02; }
@@ -655,6 +802,67 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, blClus); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lClus);
       gl.bindBuffer(gl.ARRAY_BUFFER, blClusPrev); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lClusPrev);
       gl.bindBuffer(gl.ARRAY_BUFFER, blGdir); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lGdir);
+      // ---- orrery form: groups are planets on rings round a crystal core; each note is a bead ----
+      orrPrev.set(orrData);
+      const C0 = [0, TARGET_Y, 0], nRing = L <= 12 ? L : Math.min(11, Math.ceil(L / 9)), perRing = Math.ceil(L / nRing), sm = L > 24 ? 0.55 : 1;
+      const rIncl = [], rOm = [], rPh = [];
+      for (let k = 0; k < nRing; k++) { rIncl.push((gr() - 0.5) * 0.24); rOm.push(gr() * 6.283185307); rPh.push(gr() * 6.283185307); }
+      const ringRad = (k) => 0.62 + 1.2 * (nRing > 1 ? k / (nRing - 1) : 0.5);
+      const ringPt = (k, th, rad) => {
+        const ci = Math.cos(rIncl[k]), si = Math.sin(rIncl[k]), co = Math.cos(rOm[k]), so = Math.sin(rOm[k]), c = Math.cos(th) * rad, s2 = Math.sin(th) * rad;
+        return [C0[0] + c * co - s2 * so * ci, C0[1] + s2 * si, C0[2] + c * so + s2 * co * ci];
+      };
+      const D = [];
+      const seg = (a, b, col) => { D.push(a[0], a[1], a[2], col[0], col[1], col[2], col[3], 0, 0, b[0], b[1], b[2], col[0], col[1], col[2], col[3], 0, 0); };
+      const circle = (fn, n, col, dash) => { let prev = fn(0); for (let i = 1; i <= n; i++) { const cur = fn(i / n * 6.283185307); if (!dash || (i % dash[0]) < dash[1]) seg(prev, cur, col); prev = cur; } };
+      const RING = [0.45, 0.5, 0.78, 0.36], CAGE = [0.42, 0.47, 0.74, 0.22], MINI = [0.55, 0.58, 0.86, 0.32];
+      for (let k = 0; k < nRing; k++) circle((t) => ringPt(k, t, ringRad(k)), 200, RING, (k % 3 === 2) ? [3, 2] : null);
+      [[0, 0], [1.05, 0.3], [1.05, 2.4], [1.5708, 1.2], [0.55, 4.1]].forEach((q, i) => {     // celestial cage
+        const ci = Math.cos(q[0]), si = Math.sin(q[0]), co = Math.cos(q[1]), so = Math.sin(q[1]), RC = 2.14;
+        circle((t) => { const c = Math.cos(t) * RC, s2 = Math.sin(t) * RC; return [C0[0] + c * co - s2 * so * ci, C0[1] + s2 * si, C0[2] + c * so + s2 * co * ci]; }, 240, CAGE, i === 4 ? [2, 1] : null);
+      });
+      circle((t) => [C0[0] + Math.cos(t) * ORBIT_R, C0[1], C0[2] + Math.sin(t) * ORBIT_R], 240, [0.62, 0.66, 0.92, 0.5], [8, 5]);   // the gem's dashed orbit
+      const byCount = live.map((g, i) => i).sort((a, b) => cnt[live[a]] - cnt[live[b]] || a - b);       // smallest on the inner rings
+      byCount.forEach((li, oi) => {
+        const Gp = list[live[li]], m = Gp.m, M = m.length;
+        const k = L <= 12 ? oi : oi % nRing, slot = L <= 12 ? 0 : Math.floor(oi / nRing);
+        const th = rPh[k] + (L <= 12 ? oi * 2.399963229728653 : slot / perRing * 6.283185307);
+        const c = ringPt(k, th, ringRad(k)), rho = clamp(0.036 + 0.021 * Math.cbrt(M), 0.05, 0.19) * sm;
+        Gp.oc = c; Gp.orad = rho;
+        if (M >= 40) {                        // a "berry": beads spread over a sphere
+          const br = clamp(rho * 1.9 / Math.sqrt(M), 0.0062, 0.016);
+          m.forEach((n, q) => {
+            const y = 1 - 2 * (q + 0.5) / M, r = Math.sqrt(Math.max(0, 1 - y * y)), ph = q * 2.399963229728653, sh = (M > 200 && q % 3 === 2) ? 0.6 : 1;
+            orrData[n * 4] = c[0] + r * Math.cos(ph) * rho * sh; orrData[n * 4 + 1] = c[1] + y * rho * sh; orrData[n * 4 + 2] = c[2] + r * Math.sin(ph) * rho * sh; orrData[n * 4 + 3] = br * (q === 0 ? 1.6 : 1);
+          });
+        } else {                              // a hub with moons on small orbits
+          let ux = gr() - 0.5, uy = (gr() - 0.5) * 0.6, uz = gr() - 0.5, l2 = Math.hypot(ux, uy, uz) || 1; ux /= l2; uy /= l2; uz /= l2;
+          let vx = -uz, vy = 0.35, vz = ux; const d2 = vx * ux + vy * uy + vz * uz; vx -= d2 * ux; vy -= d2 * uy; vz -= d2 * uz; l2 = Math.hypot(vx, vy, vz) || 1; vx /= l2; vy /= l2; vz /= l2;
+          const per = 10, rings = Math.max(1, Math.ceil((M - 1) / per));
+          m.forEach((n, q) => {
+            let x = c[0], y = c[1], z = c[2], br = 0.017 * sm + 0.004;
+            if (q > 0) {
+              const j = Math.floor((q - 1) / per), inRing = Math.min(per, M - 1 - j * per), a = ((q - 1) % per) / inRing * 6.283185307 + j * 0.7, rd = rho * (0.55 + 0.42 * j);
+              x += rd * (Math.cos(a) * ux + Math.sin(a) * vx); y += rd * (Math.cos(a) * uy + Math.sin(a) * vy); z += rd * (Math.cos(a) * uz + Math.sin(a) * vz); br = 0.0105 * (sm < 1 ? 0.8 : 1);
+            }
+            orrData[n * 4] = x; orrData[n * 4 + 1] = y; orrData[n * 4 + 2] = z; orrData[n * 4 + 3] = br;
+          });
+          for (let j = 0; j < rings && M > 1; j++) { const rd = rho * (0.55 + 0.42 * j); circle((t) => [c[0] + rd * (Math.cos(t) * ux + Math.sin(t) * vx), c[1] + rd * (Math.cos(t) * uy + Math.sin(t) * vy), c[2] + rd * (Math.cos(t) * uz + Math.sin(t) * vz)], 48, MINI, null); }
+        }
+        let un = 0; for (const n of m) if (degree[n] === 0) un++;
+        Gp.stats = { notes: M, links: 0, toLink: un };
+      });
+      for (let v = 0; v < NL; v += 2) { const a = keyOf[linkPairs[v]], b = keyOf[linkPairs[v + 1]]; if (a !== b) { list[a].stats.links++; list[b].stats.links++; } }
+      // the three groups with the most recent activity get a beam and a fan of their newest notes
+      const recentCut = dMax - 21 * 864e5, rc = new Int32Array(G);
+      for (let n = 0; n < NN; n++) if (dates[n] >= recentCut) rc[keyOf[n]]++;
+      orr.active = live.slice().sort((a, b) => rc[b] - rc[a] || cnt[b] - cnt[a]).slice(0, Math.min(3, L)).map((g) => list[g]);
+      orr.active.forEach((Gp) => {
+        Gp.m.slice().sort((a, b) => dates[b] - dates[a]).slice(0, 26).forEach((n) => seg(Gp.oc, beadOf(n), [1, 0.2, 0.2, 0.36]));
+      });
+      if (!animate) orrPrev.set(orrData);
+      upTex(orrTex, orrData); upTex(orrPrevTex, orrPrev);
+      decoData(dStatic, D); orr.arcsDirty = true; orr.toLink = 0; for (let n = 0; n < NN; n++) if (degree[n] === 0) orr.toLink++;
       S.clusMix = animate ? 0 : 1;
       groups = list.filter((g) => g.count > 0); groups.keyOf = keyOf; groups.noteC = noteC; groups.starP = starP;
     }
@@ -685,7 +893,8 @@ void main() {
     // ---------- camera ----------
     let VP = new Float32Array(16), eye = [0, 0, 5];
     function updateCamera() {
-      const d = baseDist * zoom, cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+      const pitch = clamp(S.pitch + 0.34 * oEase(), -1.25, 1.25);      // the orrery is seen from a little above its plane
+      const d = baseDist * zoom, cp = Math.cos(pitch), sp = Math.sin(pitch);
       eye = [Math.sin(S.yaw) * cp * d, TARGET_Y + sp * d, Math.cos(S.yaw) * cp * d];
       const V = lookAt(eye, [0, TARGET_Y, 0], [0, 1, 0]);
       VP = mul(perspective(FOV, W / H, 0.1, 60), V);
@@ -707,7 +916,10 @@ void main() {
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noteTex); gl.uniform1i(P.u.uNoteTex, 0); gl.uniform1i(P.u.uTexW, TW);
       gl.uniform1i(P.u.uColorMode, S.colorMode); gl.uniform3fv(P.u.uColor, S.color);
       gl.uniform1f(P.u.uDim, S.dim); gl.uniform1f(P.u.uShowNotes, S.showNotes);
-      gl.uniform1f(P.u.uGalaxy, S.galaxy); gl.uniform1i(P.u.uTexH, TH);
+      gl.uniform1f(P.u.uGalaxy, S.galaxy); gl.uniform1i(P.u.uTexH, TH); gl.uniform1f(P.u.uOrrery, S.orrery);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, orrTex); gl.uniform1i(P.u.uOrrTex, 1);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, orrPrevTex); gl.uniform1i(P.u.uOrrPrev, 2);
+      gl.activeTexture(gl.TEXTURE0);
     }
     function setPoint(pick) {
       const P = pPoint; gl.useProgram(P.p); setCommon(P);
@@ -724,6 +936,52 @@ void main() {
       gl.uniform1f(P.u.uPx, 1.9 * dpr * Math.pow(cssH / 810, 0.85) * (pick ? 0.5 : 1));
       gl.uniform1f(P.u.uPointSize, S.pointSize); gl.uniform1f(P.u.uRefDist, baseDist);
       gl.uniform1f(P.u.uHover, S.hover); gl.uniform1f(P.u.uSel, S.sel);
+      gl.uniform1f(P.u.uPxPerUnit, (pick ? 0.5 : 1) * H / (2 * Math.tan(FOV / 2)));
+    }
+    function drawOrrery(oe, dt) {
+      const ppu = H / (2 * Math.tan(FOV / 2));
+      // the companion gem keeps to the near side of its dashed orbit
+      let da = S.yaw - S.gemAng; da = Math.atan2(Math.sin(da), Math.cos(da)); S.gemAng += da * (1 - Math.exp(-dt * 2.2));
+      const ga = S.gemAng, gem = [Math.sin(ga) * ORBIT_R, TARGET_Y, Math.cos(ga) * ORBIT_R];
+      const P = pDeco; gl.useProgram(P.p); gl.uniformMatrix4fv(P.u.uVP, false, VP); gl.uniformMatrix4fv(P.u.uModel, false, IDENT);
+      gl.uniform1f(P.u.uTime, S.time); gl.uniform1f(P.u.uGrow, 9); gl.uniform1f(P.u.uFlow, 0); gl.uniform1f(P.u.uAlpha, oe * S.clusMix);
+      gl.bindVertexArray(dStatic.v); gl.drawArrays(gl.LINES, 0, dStatic.n);
+      // every link as a golden thread, growing out from the core
+      orr.grow += clamp((S.showLinks ? 1.25 : -0.25) - orr.grow, -dt / 1.3, dt / 2.6);
+      if (orr.grow > -0.2 && NL && S.clusMix >= 1) {
+        if (orr.arcsDirty) buildArcs();
+        gl.uniform1f(P.u.uGrow, orr.grow); gl.uniform1f(P.u.uFlow, 1); gl.uniform1f(P.u.uAlpha, oe);
+        gl.bindVertexArray(dArcs.v); gl.drawArrays(gl.LINES, 0, dArcs.n);
+        gl.uniform1f(P.u.uGrow, 9); gl.uniform1f(P.u.uFlow, 0);
+      }
+      if (dHot.n) { gl.uniform1f(P.u.uAlpha, oe); gl.bindVertexArray(dHot.v); gl.drawArrays(gl.LINES, 0, dHot.n); }
+      if (S.beams && orr.active.length) {          // beams: camera-facing ribbons from the gem to the active planets
+        const B = [], w = 0.0105 * Math.max(1, zoom * 0.9), c = [1, 0.15, 0.13, 0.95];
+        for (const Gp of orr.active) {
+          const A = gem, T = Gp.oc, dx = T[0] - A[0], dy = T[1] - A[1], dz = T[2] - A[2], ex = eye[0] - A[0], ey = eye[1] - A[1], ez = eye[2] - A[2];
+          let sx = dy * ez - dz * ey, sy = dz * ex - dx * ez, sz = dx * ey - dy * ex; const sl = Math.hypot(sx, sy, sz) || 1; sx *= w / sl; sy *= w / sl; sz *= w / sl;
+          const q = (pt, sg, t) => B.push(pt[0] + sx * sg, pt[1] + sy * sg, pt[2] + sz * sg, c[0], c[1], c[2], c[3], t, 0);
+          q(A, -1, 0); q(A, 1, 0); q(T, 1, 1); q(A, -1, 0); q(T, 1, 1); q(T, -1, 1);
+        }
+        decoData(dDyn, B, gl.DYNAMIC_DRAW); gl.uniform1f(P.u.uAlpha, oe * S.clusMix * (0.84 + 0.16 * Math.sin(S.time * 2.3)));
+        gl.bindVertexArray(dDyn.v); gl.drawArrays(gl.TRIANGLES, 0, dDyn.n);
+      }
+      gl.uniform1f(P.u.uAlpha, oe);
+      gl.uniformMatrix4fv(P.u.uModel, false, model(0, TARGET_Y, 0, S.time * 0.35, 0.55 + 0.12 * Math.sin(S.time * 0.5), 0.2));
+      gl.bindVertexArray(dCrysT.v); gl.drawArrays(gl.TRIANGLES, 0, dCrysT.n); gl.bindVertexArray(dCrysL.v); gl.drawArrays(gl.LINES, 0, dCrysL.n);
+      gl.uniformMatrix4fv(P.u.uModel, false, model(gem[0], gem[1] + 0.012 * Math.sin(S.time * 1.3), gem[2], S.time * 0.8, 0, 0.085));
+      gl.bindVertexArray(dGemT.v); gl.drawArrays(gl.TRIANGLES, 0, dGemT.n); gl.bindVertexArray(dGemL.v); gl.drawArrays(gl.LINES, 0, dGemL.n);
+      // glows, a moon, and the gem's comet trail
+      const Gs = [], gp = (pt, col, sz) => Gs.push(pt[0], pt[1], pt[2], col[0], col[1], col[2], col[3], sz);
+      gp([0, TARGET_Y, 0], [1, 0.35, 0.55, 0.5], 0.62); gp([0, TARGET_Y, 0], [1, 0.75, 0.85, 0.65], 0.2);
+      gp(gem, [0.72, 0.3, 1.0, 0.8], 0.46); gp(gem, [1, 0.62, 0.95, 0.9], 0.2);
+      const ma = S.time * 0.16; gp([Math.cos(ma) * 0.42, TARGET_Y - 0.05, Math.sin(ma) * 0.42], [0.85, 0.86, 0.92, 0.7], 0.14);
+      for (let i = 0; i < 26; i++) {
+        const a = ga + 0.07 + i * 0.021 + 0.004 * Math.sin(i * 12.9), rr = ORBIT_R + 0.035 * Math.sin(i * 7.7) + 0.02 * Math.sin(S.time * 0.9 + i);
+        gp([Math.sin(a) * rr, TARGET_Y + 0.03 * Math.sin(i * 3.1) + i * 0.0035, Math.cos(a) * rr], [0.92, 0.92, 1, 0.85 - i * 0.02], 0.03 - i * 0.0004);
+      }
+      const Q = pGlow; gl.useProgram(Q.p); gl.uniformMatrix4fv(Q.u.uVP, false, VP); gl.uniform1f(Q.u.uPxPerUnit, ppu); gl.uniform1f(Q.u.uAlpha, oe);
+      gl.bindVertexArray(gvao); gl.bindBuffer(gl.ARRAY_BUFFER, gbuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(Gs), gl.DYNAMIC_DRAW); gl.drawArrays(gl.POINTS, 0, Gs.length / 8);
     }
     const gEase = () => { const f = clamp((S.galaxy - 0.19) / 0.62, 0, 1); return f * f * f * (f * (f * 6 - 15) + 10); };
     function blit(P, src, dst, set) {
@@ -749,6 +1007,8 @@ void main() {
       const kf = 1 - Math.exp(-dt * 14);
       S.form += (S.formTarget - S.form) * kf; S.spread += (S.spreadTarget - S.spread) * kf;
       S.galaxy += clamp(S.galaxyTarget - S.galaxy, -dt / 2.6, dt / 2.6);
+      S.orrery += clamp(S.orreryTarget - S.orrery, -dt / 2.8, dt / 2.8);
+      if ((S.orrery > 0.5) !== orr.was) { orr.was = S.orrery > 0.5; setHot(); }
       if (S.clusMix < 1) S.clusMix = Math.min(1, S.clusMix + dt / 0.9);
       for (let c = 0; c < 3; c++) S.color[c] += (S.colorTarget[c] - S.color[c]) * (1 - Math.exp(-dt * 16));
       zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * 10));
@@ -771,21 +1031,23 @@ void main() {
       gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
       const gx = gEase();
-      if (S.galaxy > 0.01) {                         // starfield behind everything
+      const oe = oEase();
+      if (S.galaxy > 0.01 || S.orrery > 0.01) {      // starfield behind everything
         gl.useProgram(pField.p); gl.uniformMatrix4fv(pField.u.uVP, false, VP);
-        gl.uniform1f(pField.u.uPx, 1.7 * dpr * Math.pow(cssH / 810, 0.85)); gl.uniform1f(pField.u.uVis, 0.95 * S.galaxy); gl.uniform1f(pField.u.uTime, S.time);
+        gl.uniform1f(pField.u.uPx, 1.7 * dpr * Math.pow(cssH / 810, 0.85)); gl.uniform1f(pField.u.uVis, 0.95 * Math.max(S.galaxy, 0.6 * S.orrery)); gl.uniform1f(pField.u.uTime, S.time);
         gl.bindVertexArray(fvao); gl.drawArrays(gl.POINTS, 0, NF);
       }
       setPoint(false); gl.bindVertexArray(vao); gl.drawArrays(gl.POINTS, 0, N);
-      const linkA = Math.max(S.showLinks ? 0.055 : 0, 0.032 * gx);
+      const linkA = Math.max(S.showLinks ? 0.055 : 0, 0.032 * gx) * (1 - oe);
       if (linkA > 0 || hotCount || gx > 0) {
         const P = pLine; gl.useProgram(P.p); setCommon(P);
-        if (gx > 0) { gl.bindVertexArray(kvao); gl.uniform1f(P.u.uAlpha, 0.16 * gx); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NN * 2); }
+        if (gx > 0) { gl.bindVertexArray(kvao); gl.uniform1f(P.u.uAlpha, 0.16 * gx * (1 - oe)); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NN * 2); }
         gl.bindVertexArray(lvao);
         if (NL && linkA > 0) { gl.uniform1f(P.u.uAlpha, linkA); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NL); }
-        if (hotCount) { gl.uniform1f(P.u.uAlpha, 0.5); gl.uniform1f(P.u.uHot, 1); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hotIdx); gl.drawElements(gl.LINES, hotCount, gl.UNSIGNED_INT, 0); }
+        if (hotCount && oe < 0.5) { gl.uniform1f(P.u.uAlpha, 0.5 * (1 - 2 * oe)); gl.uniform1f(P.u.uHot, 1); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hotIdx); gl.drawElements(gl.LINES, hotCount, gl.UNSIGNED_INT, 0); }
       }
-      if (S.galaxy > 0.01) { setStar(false); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
+      if (oe > 0.001) drawOrrery(oe, dt);
+      if (S.galaxy > 0.01 || S.orrery > 0.01) { setStar(false); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
       gl.disable(gl.BLEND); gl.bindVertexArray(quad);
       // bloom
       let src = RT.scene;
@@ -818,7 +1080,7 @@ void main() {
       gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.disable(gl.BLEND);
       setPoint(true); gl.bindVertexArray(vao); gl.drawArrays(gl.POINTS, 0, N);
-      if (S.galaxy > 0.5) { setStar(true); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
+      if (S.galaxy > 0.5 || S.orrery > 0.5) { setStar(true); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
       gl.bindVertexArray(null);
       gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pickBuf);
       gl.disable(gl.SCISSOR_TEST); gl.disable(gl.DEPTH_TEST); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -835,6 +1097,9 @@ void main() {
       const ids = [];
       for (const n of [S.hover, S.sel]) if (n >= 0 && linkStart.has(n)) for (const v of linkStart.get(n)) ids.push(v, v + 1);
       hotCount = ids.length;
+      const arcs = [];                       // in the orrery a note's links are drawn as bright curved arcs
+      if (S.orrery > 0.5) for (const n of [S.hover, S.sel]) if (n >= 0) (notes[n].l || []).forEach((j, i) => { if (j < NN) arc(arcs, beadOf(n), beadOf(j), [0.87, 0.85, 1.0, 0.8], (n * 0.37 + i * 0.618) % 1, 18); });
+      decoData(dHot, arcs, gl.DYNAMIC_DRAW);
       gl.bindVertexArray(lvao); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hotIdx);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(ids), gl.DYNAMIC_DRAW); gl.bindVertexArray(null);
     }
@@ -892,6 +1157,7 @@ void main() {
       set(k, v) {
         if (k === 'form') S.formTarget = clamp(v, 0, 1); else if (k === 'spread') S.spreadTarget = clamp(v, 0, 1);
         else if (k === 'galaxy') S.galaxyTarget = v ? 1 : 0;
+        else if (k === 'orrery') S.orreryTarget = v ? 1 : 0;
         else S[k] = v;
       },
       setColor(hex) { S.colorTarget = hexToRgb(hex); },
@@ -906,15 +1172,20 @@ void main() {
       setHover(n) { S.hover = n == null ? -1 : n; setHot(); },
       groups() { return groups; },
       groupScreen(g) {
-        const p = formPos(g.a, g.c, g.dir), t = gEase();
-        return project(t > 0 && g.gc ? [lerp(p[0], g.gc[0], t), lerp(p[1], g.gc[1] + g.gr * 0.9 + 0.05, t), lerp(p[2], g.gc[2], t)] : p);
+        let p = formPos(g.a, g.c, g.dir); const t = gEase(), o = oEase();
+        if (t > 0 && g.gc) p = [lerp(p[0], g.gc[0], t), lerp(p[1], g.gc[1] + g.gr * 0.9 + 0.05, t), lerp(p[2], g.gc[2], t)];
+        if (o > 0 && g.oc) p = [lerp(p[0], g.oc[0], o), lerp(p[1], g.oc[1] + g.orad + 0.045, o), lerp(p[2], g.oc[2], o)];
+        return project(p);
       },
       starScreen(n) {
-        const t = gEase(), sp = groups.starP, nc = groups.noteC;
+        const t = gEase(), o = oEase(), sp = groups.starP, nc = groups.noteC;
+        if (o > 0.5) return project(beadOf(n));
         const p = formPos([anchor[n * 3], anchor[n * 3 + 1], anchor[n * 3 + 2]], [nc[n * 3], nc[n * 3 + 1], nc[n * 3 + 2]], [0, 0, 0]);
         return project([lerp(p[0], sp[n * 3], t), lerp(p[1], sp[n * 3 + 1], t), lerp(p[2], sp[n * 3 + 2], t)]);
       },
-      galaxyEase: gEase,
+      galaxyEase: gEase, orreryEase: oEase,
+      zoomLevel() { return zoom >= 0.85 ? 'FAR' : zoom < 0.45 ? 'CLOSE' : 'MID'; },
+      orreryInfo() { return { toLink: orr.toLink, active: orr.active.map((g) => g.name) }; },
       project,
       resetView() { zoomTarget = 1; S.pitch = 0; },
       replayIntro() { S.intro = 0; S.introDone = false; S.yaw = 0; },

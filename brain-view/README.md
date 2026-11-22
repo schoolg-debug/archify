@@ -4,6 +4,9 @@ A single-page WebGL2 view of a notes collection drawn as a particle brain and ne
 Every speck belongs to a note: areas of life map to regions of the brain, and the spine is a
 timeline (top = newest). The **Galaxy** button (or Space) morphs the same particles into one
 spiral galaxy per group, with a glowing star for every note and lines for its links.
+The **Orrery** button turns each group into a planet of note-beads on
+rings round a crystal core, with a wireframe celestial sphere, beams to the most active groups,
+and every link as a golden thread (All links / L). Space cycles Brain → Galaxy → Orrery.
 No dependencies and no network requests at runtime.
 
 ## Build

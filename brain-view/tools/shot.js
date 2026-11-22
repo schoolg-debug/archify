@@ -61,6 +61,18 @@ const [page_, outDir, scenario = 'main', w = '1440', h = '810', dpr = '1'] = pro
       await page.keyboard.press('Space'); await to(12.3); await shot('galaxy_back_mid');
       await to(14.2); await shot('galaxy_off');
     },
+    async orrery() {
+      await to(5.0); await page.click('#orreryBtn');
+      await to(6.4); await shot('orr_mid');
+      await to(8.8); await shot('orr_on');
+      await page.keyboard.press('l'); await to(11.8); await shot('orr_links'); await page.keyboard.press('l');
+      await page.evaluate(() => { const g = window.__brain.eng.groups(); window.__brain.openNote(g[g.length - 2].hub); });
+      await to(13.4); await shot('orr_focus');
+      await page.keyboard.press('Escape'); await page.mouse.move(720, 420); await page.mouse.wheel(0, -700); await to(15.0); await shot('orr_close');
+      await page.mouse.wheel(0, 900); await page.keyboard.press('Space'); await to(16.4); await shot('orr_back_mid'); await to(18.6); await shot('orr_off');
+    },
+    async orrlinks() { await to(4.0); await page.click('#orreryBtn'); await to(7.6); await page.keyboard.press('l'); await to(11.0); await shot('orr_links'); },
+    async orrphone() { await to(4.0); await page.click('#orreryBtn'); await to(8.0); await shot('orr_phone'); },
     async extras() {
       await to(5);
       await page.click('.tg[data-k=labels]'); await page.click('.tg[data-k=showLinks]'); await to(5.5); await shot('labels_links');

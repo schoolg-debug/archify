@@ -29,7 +29,7 @@
   $('#nNotes').textContent = NN; $('#nLinks').textContent = eng.linkCount;
   if (D.title) { document.title = D.title; }
 
-  const st = { area: -1, folder: -1, query: '', colorMode: 'one', color: SW[0], labels: false, sel: -1, viewOpen: true, galaxy: false, prev: null };
+  const st = { area: -1, folder: -1, query: '', colorMode: 'one', color: SW[0], labels: false, sel: -1, viewOpen: true, galaxy: false, form: 'brain', prev: null };
 
   // ---------------- filter ----------------
   function matcher() {
@@ -69,8 +69,9 @@
   }
   function renderLegend() {
     const lg = $('#legend');
-    lg.className = st.galaxy ? '' : st.colorMode === 'time' ? 'time' : st.colorMode === 'one' ? '' : 'none';
-    if (st.galaxy) { lg.textContent = 'Every ' + ({ area: 'area', folder: 'folder', month: 'month', source: 'source' }[$('#selCluster').value] || 'group') + ' is its own galaxy'; lg.title = ''; }
+    lg.className = st.form !== 'brain' ? '' : st.colorMode === 'time' ? 'time' : st.colorMode === 'one' ? '' : 'none';
+    if (st.form === 'orrery') { lg.textContent = 'Every ' + ({ area: 'area', folder: 'folder', month: 'month', source: 'source' }[$('#selCluster').value] || 'group') + ' is a planet in orbit'; lg.title = ''; }
+    else if (st.galaxy) { lg.textContent = 'Every ' + ({ area: 'area', folder: 'folder', month: 'month', source: 'source' }[$('#selCluster').value] || 'group') + ' is its own galaxy'; lg.title = ''; }
     else if (st.colorMode === 'time') {
       // colour follows writing order; when the dates are lopsided, say where the midpoint falls
       const mid = Math.abs(eng.medLin - 0.5) > 0.2 ? '<span>' + fmtDate(eng.dMed) + '</span>' : '';
@@ -126,28 +127,60 @@
     const on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
     const k = b.dataset.k;
     if (k === 'labels') setLabels(on); else eng.set(k, on ? 1 : 0);
+    syncHud();
   }));
   function setLabels(on) {
     st.labels = on; $('#labels').style.display = on ? '' : 'none';
     const b = $('.tg[data-k=labels]'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
   }
-  // ---------------- galaxy form ----------------
-  function setGalaxy(on) {
-    if (on === st.galaxy) return;
-    st.galaxy = on; app.classList.toggle('galaxy', on);
-    const b = $('#galaxyBtn'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  // ---------------- forms: brain / galaxy / orrery ----------------
+  const FORMS = ['brain', 'galaxy', 'orrery'];
+  function setForm(mode) {
+    if (mode === st.form) return;
+    const was = st.form; st.form = mode; st.galaxy = mode === 'galaxy';
+    app.classList.toggle('galaxy', mode === 'galaxy'); app.classList.toggle('orrery', mode === 'orrery');
+    for (const [id, m] of [['#galaxyBtn', 'galaxy'], ['#orreryBtn', 'orrery']]) { const b = $(id); b.classList.toggle('on', mode === m); b.setAttribute('aria-pressed', mode === m); }
     const sel = $('#selCluster');
-    if (on) {
+    if (was === 'brain') {                       // entering a special form: one body per area, labels on
       st.prev = { cluster: null, labels: st.labels };
-      if (sel.value === 'folder') { st.prev.cluster = 'folder'; sel.value = 'area'; eng.setClusterBy('area'); buildLabels(); }   // a galaxy per area
+      if (sel.value === 'folder') { st.prev.cluster = 'folder'; sel.value = 'area'; eng.setClusterBy('area'); buildLabels(); }
       setLabels(true);
-    } else if (st.prev) {
+    } else if (mode === 'brain' && st.prev) {    // back to the brain: put things as they were
       if (st.prev.cluster) { sel.value = st.prev.cluster; eng.setClusterBy(st.prev.cluster); buildLabels(); }
       setLabels(st.prev.labels); st.prev = null;
     }
-    eng.set('galaxy', on); renderLegend();
+    eng.set('galaxy', mode === 'galaxy'); eng.set('orrery', mode === 'orrery');
+    $('#hintLead').textContent = mode === 'orrery' ? 'Click a bead' : 'Click a star';
+    renderLegend(); syncHud();
   }
-  $('#galaxyBtn').addEventListener('click', () => setGalaxy(!st.galaxy));
+  const setGalaxy = (on) => setForm(on ? 'galaxy' : 'brain');
+  $('#galaxyBtn').addEventListener('click', () => setForm(st.form === 'galaxy' ? 'brain' : 'galaxy'));
+  $('#orreryBtn').addEventListener('click', () => setForm(st.form === 'orrery' ? 'brain' : 'orrery'));
+  // orrery HUD
+  function toggleSwitch(k) { const b = $('.tg[data-k=' + k + ']'); if (b) b.click(); }
+  function syncHud() {
+    const info = eng.orreryInfo();
+    $('#hudDue').textContent = info.toLink + ' to link';
+    $('#hudActive b').textContent = info.active.length + ' active';
+    $('#hudActive').title = 'Beams to your most active groups: ' + info.active.join(', ');
+    $('#hudActive').classList.toggle('on', !!eng.state.beams);
+    $('#hudLinks').classList.toggle('on', !!eng.state.showLinks);
+    $('#hudLock').classList.toggle('on', !eng.state.turning);
+    $('#hudLock').textContent = eng.state.turning ? 'Lock' : 'Locked';
+  }
+  $('#hudActive').addEventListener('click', () => { eng.set('beams', eng.state.beams ? 0 : 1); syncHud(); });
+  $('#hudLinks').addEventListener('click', () => { toggleSwitch('showLinks'); syncHud(); });
+  $('#hudLock').addEventListener('click', () => { toggleSwitch('turning'); syncHud(); });
+  $('#hudClean').addEventListener('click', () => app.classList.toggle('clean'));
+  let fpsN = 0, fpsT = performance.now(), fps = 0;
+  eng.on('frame', () => {
+    fpsN++; const now = performance.now();
+    if (now - fpsT < 500) return;
+    fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
+    if (st.form !== 'orrery') return;
+    const z = eng.zoomLevel(); $('#hudZoom').textContent = z;
+    $('#readout').textContent = 'nodes  ' + NN + '\nlinks  ' + eng.linkCount + '\nmode   ' + (eng.state.showLinks ? 'STR' : 'ORB') + '\nzoom   ' + z + '\nfps    ' + fps;
+  });
   function setView(open) {
     st.viewOpen = open; $('#view').classList.toggle('closed', !open); $('#viewBtn').classList.toggle('on', open);
     $('#viewBtn').setAttribute('aria-expanded', open); app.classList.toggle('noview', !open);
@@ -228,7 +261,8 @@
   });
   window.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || '') && document.activeElement.type !== 'range';
-    if (e.key === ' ' && !typing && !e.repeat) { e.preventDefault(); setGalaxy(!st.galaxy); }
+    if (e.key === ' ' && !typing && !e.repeat) { e.preventDefault(); setForm(FORMS[(FORMS.indexOf(st.form) + 1) % FORMS.length]); }
+    else if ((e.key === 'l' || e.key === 'L') && !typing && !e.metaKey && !e.ctrlKey) { toggleSwitch('showLinks'); }
     else if ((e.key === 'h' || e.key === 'H') && !typing && !e.metaKey && !e.ctrlKey) app.classList.toggle('clean');
     else if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
     else if (e.key === 'Escape' && document.activeElement !== q) { if (st.sel >= 0) closeNote(); }
@@ -240,7 +274,9 @@
   function buildLabels() {
     labBox.textContent = '';
     labs = eng.groups().map((g) => {
-      const e = el('div', 'lb', '<i></i><b>' + esc(g.name) + '</b><span>' + g.count + '</span>');
+      const sx = g.stats || { notes: g.count, links: 0, toLink: 0 };
+      const line = sx.notes + ' notes' + (sx.links ? ' · ' + sx.links + ' links' : '') + (sx.toLink ? ' · ' + sx.toLink + ' to link' : '');
+      const e = el('div', 'lb', '<i></i><b>' + esc(g.name) + '</b><span>' + g.count + '</span><em>' + esc(line) + '</em>');
       e.style.setProperty('--c', g.color || 'var(--glow)'); labBox.appendChild(e); return { g, e, w: 0 };
     });
     labs.forEach((l) => { l.w = l.e.offsetWidth || (l.g.name.length * 6 + 30); });
@@ -258,7 +294,7 @@
     if (!st.labels) return;
     if (labs.length && !labs[0].w) labs.forEach((l) => { l.w = l.e.offsetWidth; });
     labBox.style.setProperty('--glow', st.color);
-    const gxe = eng.galaxyEase(); labBox.classList.toggle('gx', gxe > 0.5);
+    const oxe = eng.orreryEase(), gxe = Math.max(eng.galaxyEase(), oxe); labBox.classList.toggle('gx', gxe > 0.5 && oxe <= 0.5); labBox.classList.toggle('orr', oxe > 0.5);
     const bc = eng.project(eng.anatomy.brainCentre), f = Math.min(1, Math.max(0, (S.form - 0.15) / 0.7)), e = f * f * (3 - 2 * f);
     const placed = [], items = [];
     for (const l of labs) {
@@ -280,7 +316,7 @@
       it.l.e.style.transform = 'translate(' + (it.x + 8 - gxe * (8 + it.l.w / 2)).toFixed(1) + 'px,' + (it.y - 6 - gxe * 8).toFixed(1) + 'px)';
     }
     for (const s of stars) {
-      if (gxe < 0.6) { s.e.style.opacity = 0; continue; }
+      if (gxe < 0.6 || oxe > 0.3) { s.e.style.opacity = 0; continue; }
       if (!s.w) s.w = s.e.offsetWidth;
       const p = eng.starScreen(s.n); if (p.w <= 0) { s.e.style.opacity = 0; continue; }
       const r = { x0: p.x + 8, y0: p.y - 8, x1: p.x + 14 + s.w, y1: p.y + 8 };
@@ -295,5 +331,5 @@
   // ---------------- boot ----------------
   renderAreas(); renderLegend(); renderSwatches();
   if (small()) { $('#areas').classList.add('folded'); setView(false); }
-  if (params.has('capture')) window.__brain = { eng, st, openNote, closeNote, setColor, setView, setGalaxy, applyFilter, renderAreas };
+  if (params.has('capture')) window.__brain = { eng, st, openNote, closeNote, setColor, setView, setGalaxy, setForm, applyFilter, renderAreas };
 })();
