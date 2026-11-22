@@ -24,6 +24,10 @@
     <input id="q" type="text" placeholder="Search your brain…" autocomplete="off" spellcheck="false" aria-label="Search your brain">
     <div id="results" role="listbox"></div>
   </div>
+  <button id="galaxyBtn" aria-pressed="false" title="Turn the brain into a galaxy (Space)">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.2l1.35 4.1a1.6 1.6 0 0 0 1.35 1.1L14.8 8l-4.1 1.6a1.6 1.6 0 0 0-1.35 1.1L8 14.8l-1.35-4.1A1.6 1.6 0 0 0 5.3 9.6L1.2 8l4.1-1.6a1.6 1.6 0 0 0 1.35-1.1z"/></svg>
+    Galaxy
+  </button>
   <button id="viewBtn" class="on" aria-expanded="true" aria-controls="view">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5h6.2M12.4 5H14M2 11h1.6M7.8 11H14"/><circle cx="10.3" cy="5" r="1.9" fill="currentColor" stroke="none"/><circle cx="5.7" cy="11" r="1.9" fill="currentColor" stroke="none"/></svg>
     View
@@ -94,6 +98,7 @@
     </section>
   </aside>
 
+  <div id="hints" aria-hidden="true">Click a star <kbd>space</kbd> morph <kbd>H</kbd> clean view <kbd>/</kbd> search</div>
   <div id="tip" role="tooltip"></div>
   <aside id="note" aria-live="polite"></aside>
 </div>

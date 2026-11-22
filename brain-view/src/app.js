@@ -29,7 +29,7 @@
   $('#nNotes').textContent = NN; $('#nLinks').textContent = eng.linkCount;
   if (D.title) { document.title = D.title; }
 
-  const st = { area: -1, folder: -1, query: '', colorMode: 'one', color: SW[0], labels: false, sel: -1, viewOpen: true };
+  const st = { area: -1, folder: -1, query: '', colorMode: 'one', color: SW[0], labels: false, sel: -1, viewOpen: true, galaxy: false, prev: null };
 
   // ---------------- filter ----------------
   function matcher() {
@@ -69,8 +69,9 @@
   }
   function renderLegend() {
     const lg = $('#legend');
-    lg.className = st.colorMode === 'time' ? 'time' : st.colorMode === 'one' ? '' : 'none';
-    if (st.colorMode === 'time') {
+    lg.className = st.galaxy ? '' : st.colorMode === 'time' ? 'time' : st.colorMode === 'one' ? '' : 'none';
+    if (st.galaxy) { lg.textContent = 'Every ' + ({ area: 'area', folder: 'folder', month: 'month', source: 'source' }[$('#selCluster').value] || 'group') + ' is its own galaxy'; lg.title = ''; }
+    else if (st.colorMode === 'time') {
       // colour follows writing order; when the dates are lopsided, say where the midpoint falls
       const mid = Math.abs(eng.medLin - 0.5) > 0.2 ? '<span>' + fmtDate(eng.dMed) + '</span>' : '';
       lg.innerHTML = '<div class="bar"></div><div class="ends"><span>' + fmtDate(eng.dMin) + '</span>' + mid + '<span>' + fmtDate(eng.dMax) + '</span></div>';
@@ -107,7 +108,7 @@
     renderLegend();
   }
   $('#selColor').addEventListener('change', (e) => { st.colorMode = e.target.value; eng.setColorMode(st.colorMode); renderLegend(); });
-  $('#selCluster').addEventListener('change', (e) => { eng.setClusterBy(e.target.value); buildLabels(); });
+  $('#selCluster').addEventListener('change', (e) => { eng.setClusterBy(e.target.value); buildLabels(); if (st.prev) st.prev.cluster = null; renderLegend(); });
   function slider(id, out, fn, fmt) {
     const s = $(id), o = out ? $(out) : null;
     const go = () => { const v = +s.value; if (o) o.textContent = fmt ? fmt(v) : v + '%'; fn(v); };
@@ -124,8 +125,29 @@
   document.querySelectorAll('.tg').forEach((b) => b.addEventListener('click', () => {
     const on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
     const k = b.dataset.k;
-    if (k === 'labels') { st.labels = on; $('#labels').style.display = on ? '' : 'none'; } else eng.set(k, on ? 1 : 0);
+    if (k === 'labels') setLabels(on); else eng.set(k, on ? 1 : 0);
   }));
+  function setLabels(on) {
+    st.labels = on; $('#labels').style.display = on ? '' : 'none';
+    const b = $('.tg[data-k=labels]'); b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
+  }
+  // ---------------- galaxy form ----------------
+  function setGalaxy(on) {
+    if (on === st.galaxy) return;
+    st.galaxy = on; app.classList.toggle('galaxy', on);
+    const b = $('#galaxyBtn'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    const sel = $('#selCluster');
+    if (on) {
+      st.prev = { cluster: null, labels: st.labels };
+      if (sel.value === 'folder') { st.prev.cluster = 'folder'; sel.value = 'area'; eng.setClusterBy('area'); buildLabels(); }   // a galaxy per area
+      setLabels(true);
+    } else if (st.prev) {
+      if (st.prev.cluster) { sel.value = st.prev.cluster; eng.setClusterBy(st.prev.cluster); buildLabels(); }
+      setLabels(st.prev.labels); st.prev = null;
+    }
+    eng.set('galaxy', on); renderLegend();
+  }
+  $('#galaxyBtn').addEventListener('click', () => setGalaxy(!st.galaxy));
   function setView(open) {
     st.viewOpen = open; $('#view').classList.toggle('closed', !open); $('#viewBtn').classList.toggle('on', open);
     $('#viewBtn').setAttribute('aria-expanded', open); app.classList.toggle('noview', !open);
@@ -205,7 +227,10 @@
     } else if (e.key === 'Enter' && resIdx.length) { openNote(resIdx[Math.max(0, act)]); closeResults(); }
   });
   window.addEventListener('keydown', (e) => {
-    if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || '') && document.activeElement.type !== 'range';
+    if (e.key === ' ' && !typing && !e.repeat) { e.preventDefault(); setGalaxy(!st.galaxy); }
+    else if ((e.key === 'h' || e.key === 'H') && !typing && !e.metaKey && !e.ctrlKey) app.classList.toggle('clean');
+    else if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
     else if (e.key === 'Escape' && document.activeElement !== q) { if (st.sel >= 0) closeNote(); }
   });
 
@@ -219,18 +244,27 @@
       e.style.setProperty('--c', g.color || 'var(--glow)'); labBox.appendChild(e); return { g, e, w: 0 };
     });
     labs.forEach((l) => { l.w = l.e.offsetWidth || (l.g.name.length * 6 + 30); });
+    // names for the best-linked stars of each galaxy
+    stars = [];
+    const gs = eng.groups(), per = gs.length > 14 ? 1 : 2;
+    gs.forEach((g) => (g.top || []).slice(0, per).forEach((n) => {
+      const e = el('div', 'sl'); e.textContent = notes[n].t.length > 34 ? notes[n].t.slice(0, 33) + '…' : notes[n].t;
+      labBox.appendChild(e); stars.push({ n, e, w: 0 });
+    }));
   }
+  let stars = [];
   buildLabels();
   eng.on('frame', (S) => {
     if (!st.labels) return;
     if (labs.length && !labs[0].w) labs.forEach((l) => { l.w = l.e.offsetWidth; });
     labBox.style.setProperty('--glow', st.color);
+    const gxe = eng.galaxyEase(); labBox.classList.toggle('gx', gxe > 0.5);
     const bc = eng.project(eng.anatomy.brainCentre), f = Math.min(1, Math.max(0, (S.form - 0.15) / 0.7)), e = f * f * (3 - 2 * f);
     const placed = [], items = [];
     for (const l of labs) {
       const p = eng.groupScreen(l.g); if (p.w <= 0) { l.e.style.opacity = 0; continue; }
       let x = p.x, y = p.y;
-      const dx = x - bc.x, dy = y - bc.y, d = Math.hypot(dx, dy) || 1, push = (1 - e) * (34 + 0.55 * d);   // anatomy: fan the labels out of the brain
+      const dx = x - bc.x, dy = y - bc.y, d = Math.hypot(dx, dy) || 1, push = (1 - e) * (1 - gxe) * (34 + 0.55 * d);   // anatomy: fan the labels out of the brain
       x += dx / d * push; y += dy / d * push;
       items.push({ l, x, y, w: p.w });
     }
@@ -243,12 +277,23 @@
       placed.push(r);
       const depth = far > near ? (it.w - near) / (far - near) : 0;
       it.l.e.style.opacity = (1 - 0.6 * depth).toFixed(2);
-      it.l.e.style.transform = 'translate(' + (it.x + 8).toFixed(1) + 'px,' + (it.y - 6).toFixed(1) + 'px)';
+      it.l.e.style.transform = 'translate(' + (it.x + 8 - gxe * (8 + it.l.w / 2)).toFixed(1) + 'px,' + (it.y - 6 - gxe * 8).toFixed(1) + 'px)';
+    }
+    for (const s of stars) {
+      if (gxe < 0.6) { s.e.style.opacity = 0; continue; }
+      if (!s.w) s.w = s.e.offsetWidth;
+      const p = eng.starScreen(s.n); if (p.w <= 0) { s.e.style.opacity = 0; continue; }
+      const r = { x0: p.x + 8, y0: p.y - 8, x1: p.x + 14 + s.w, y1: p.y + 8 };
+      let hit = false; for (const o of placed) if (r.x0 < o.x1 && r.x1 > o.x0 && r.y0 < o.y1 && r.y1 > o.y0) { hit = true; break; }
+      if (hit) { s.e.style.opacity = 0; continue; }
+      placed.push(r);
+      s.e.style.opacity = ((gxe - 0.6) / 0.4 * 0.85).toFixed(2);
+      s.e.style.transform = 'translate(' + (p.x + 11).toFixed(1) + 'px,' + (p.y - 7).toFixed(1) + 'px)';
     }
   });
 
   // ---------------- boot ----------------
   renderAreas(); renderLegend(); renderSwatches();
   if (small()) { $('#areas').classList.add('folded'); setView(false); }
-  if (params.has('capture')) window.__brain = { eng, st, openNote, closeNote, setColor, setView, applyFilter, renderAreas };
+  if (params.has('capture')) window.__brain = { eng, st, openNote, closeNote, setColor, setView, setGalaxy, applyFilter, renderAreas };
 })();

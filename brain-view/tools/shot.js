@@ -53,6 +53,14 @@ const [page_, outDir, scenario = 'main', w = '1440', h = '810', dpr = '1'] = pro
       await set(1000); await to(15.2); await shot('form_100');
       await set(0); await to(17.2); await shot('form_back');
     },
+    async galaxy() {
+      await to(5.0); await page.click('#galaxyBtn');
+      await to(6.2); await shot('galaxy_mid');
+      await to(8.4); await shot('galaxy_on');
+      await to(11.0); await shot('galaxy_turned');
+      await page.keyboard.press('Space'); await to(12.3); await shot('galaxy_back_mid');
+      await to(14.2); await shot('galaxy_off');
+    },
     async extras() {
       await to(5);
       await page.click('.tg[data-k=labels]'); await page.click('.tg[data-k=showLinks]'); await to(5.5); await shot('labels_links');

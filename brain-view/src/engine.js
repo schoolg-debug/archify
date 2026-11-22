@@ -35,7 +35,7 @@
 precision highp float;
 precision highp int;
 uniform mat4 uVP;
-uniform float uForm, uSpread, uClusMix, uIntro;
+uniform float uForm, uSpread, uClusMix, uIntro, uGalaxy;
 vec3 morph(vec3 anat, vec3 clus, vec3 gdir, float st, vec3 nd, float turb, out float e) {
   vec3 a = anat + gdir * uSpread;
   vec3 c = clus * (1.0 + uSpread * 0.85);
@@ -44,6 +44,14 @@ vec3 morph(vec3 anat, vec3 clus, vec3 gdir, float st, vec3 nd, float turb, out f
   vec3 p = mix(a, c, e);
   p += nd * turb * sin(3.14159265 * e);
   return p;
+}
+// third form: every group becomes a small spiral galaxy
+vec3 galaxy(vec3 p, vec3 gal, float st, vec3 nd, out float eg) {
+  float f = clamp((uGalaxy - st * 0.38) / 0.62, 0.0, 1.0);
+  eg = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec3 q = mix(p, gal, eg);
+  q += nd * 0.2 * sin(3.14159265 * eg);
+  return q;
 }`;
 
   const POINT_VS = COMMON + `
@@ -56,8 +64,10 @@ layout(location=5) in vec4 aGrow;   // intro origin xyz, timeline 0..1
 layout(location=6) in float aNote;
 layout(location=7) in vec3 aGroupDir;
 layout(location=8) in float aSize;
+layout(location=9) in vec3 aGal;
+layout(location=10) in vec3 aGalPrev;
 uniform sampler2D uNoteTex;
-uniform int uTexW, uColorMode, uPick;
+uniform int uTexW, uTexH, uColorMode, uPick;
 uniform vec3 uColor;
 uniform float uTime, uPx, uPointSize, uRefDist, uShowBody, uShowNotes, uBriBody, uBriNotes, uDim, uHover, uSel, uFiltered;
 out vec4 vColor;
@@ -80,6 +90,8 @@ void main() {
   vec3 nd = normalize(aRand.yzw - 0.5);
   vec3 clus = mix(aClusPrev, aClus, uClusMix);
   vec3 p = morph(aAnat, clus, aGroupDir, aRand.x, nd, 0.10 + 0.24 * aRand.w, e);
+  float eg;
+  p = galaxy(p, mix(aGalPrev, aGal, uClusMix), aRand.z, nd, eg);
   // intro: spine draws downward, nerves grow outward, brain inflates from the stem
   float dur = kind < 0.5 || kind > 3.5 ? 0.46 : (abs(kind - 1.0) < 0.5 ? 0.10 : (abs(kind - 3.0) < 0.5 ? 0.40 : 0.36));
   float k = clamp((uIntro - aMeta.w) / dur, 0.0, 1.0);
@@ -87,7 +99,7 @@ void main() {
   p = mix(aGrow.xyz, p, ek);
   gl_Position = uVP * vec4(p, 1.0);
   float show = body ? uShowBody : uShowNotes;
-  float size = uPx * aSize * (abs(kind - 3.0) < 0.5 ? 4.2 : 1.0) * uPointSize * (uRefDist / max(gl_Position.w, 0.1));
+  float size = uPx * aSize * (abs(kind - 3.0) < 0.5 ? 4.2 : 1.0) * uPointSize * (uRefDist / max(gl_Position.w, 0.1)) * (1.0 - 0.22 * eg);
   bool hot = (abs(aNote - uHover) < 0.5 || abs(aNote - uSel) < 0.5);
   if (uPick == 1) {
     if (show < 0.5 || lit < 0.5 || k < 0.99) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 1.0; }
@@ -101,13 +113,17 @@ void main() {
   if (uColorMode == 0) tint = uColor;
   else if (uColorMode == 3) { tint = ramp(aGrow.w); if (kind > 1.5 && kind < 3.5) tint = mix(tint, uColor, kind > 2.5 ? 0.85 : 0.5); white *= 0.28; }
   else tint = body ? uColor : nt.rgb;
+  if (eg > 0.0) {      // galaxy dust takes its group's hue
+    vec3 gcol = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW + uTexH), 0).rgb;
+    tint = mix(tint, gcol, eg); white *= 1.0 - 0.8 * eg;
+  }
   vec3 col = mix(tint, vec3(1.0), white);
   if (body) { float g = dot(col, vec3(0.45)); col = mix(vec3(g), col, smoothstep(1.42, 1.85, uIntro)); }
   float gain = kind < 0.5 ? 0.40 : kind < 1.5 ? 0.46 : kind < 2.5 ? 0.48 : kind < 3.5 ? 0.062 : kind < 4.5 ? 0.30 : 0.40;
   float I = aMeta.z * gain * (body ? uBriBody : uBriNotes) * show * k;
   I *= mix(uDim, 1.0 + 0.22 * uFiltered, lit);
   I *= 0.86 + 0.14 * sin(uTime * (1.3 + aRand.y * 2.2) + aRand.z * 40.0);
-  if (hot) { I = max(I, 0.5) * 2.6; col = mix(col, vec3(1.0), 0.45); size *= 1.55; }
+  if (hot) { I = max(I, 0.5) * (1.0 + 1.6 * (1.0 - 0.8 * eg)); col = mix(col, vec3(1.0), 0.45 * (1.0 - eg)); size *= 1.0 + 0.55 * (1.0 - eg); }
   if (size < 1.0) { I *= size * size; size = 1.0; }
   gl_PointSize = size;
   vColor = vec4(col, I);
@@ -132,8 +148,10 @@ layout(location=1) in vec3 aClus;
 layout(location=2) in vec3 aClusPrev;
 layout(location=6) in float aNote;
 layout(location=7) in vec3 aGroupDir;
+layout(location=9) in vec3 aGal;
+layout(location=10) in vec3 aGalPrev;
 uniform sampler2D uNoteTex;
-uniform int uTexW, uColorMode;
+uniform int uTexW, uTexH, uColorMode;
 uniform vec3 uColor;
 uniform float uAlpha, uDim, uShowNotes, uHot;
 out vec4 vColor;
@@ -142,14 +160,81 @@ void main() {
   vec4 nt = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW), 0);
   float e;
   vec3 p = morph(aAnat, mix(aClusPrev, aClus, uClusMix), aGroupDir, 0.5, vec3(0.0), 0.0, e);
+  float eg;
+  p = galaxy(p, mix(aGalPrev, aGal, uClusMix), 0.5, vec3(0.0), eg);
   gl_Position = uVP * vec4(p, 1.0);
   vec3 tint = (uColorMode == 1 || uColorMode == 2) ? nt.rgb : uColor;
+  tint = mix(tint, texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW + uTexH), 0).rgb, eg);
   tint = mix(tint, vec3(1.0), 0.25 + 0.4 * uHot);
   float I = uAlpha * mix(uDim * 1.5, 1.0, max(nt.a, uHot)) * uShowNotes * clamp((uIntro - 2.4) / 0.6, 0.0, 1.0);
   vColor = vec4(tint * I, 1.0);
 }`;
   const LINE_FS = `#version 300 es
 precision highp float; in vec4 vColor; out vec4 o; void main() { o = vColor; }`;
+
+  // one glowing star per note (galaxy form only)
+  const STAR_VS = COMMON + `
+layout(location=0) in vec3 aAnat;
+layout(location=1) in vec3 aClus;
+layout(location=2) in vec3 aClusPrev;
+layout(location=6) in float aNote;
+layout(location=7) in vec3 aGroupDir;
+layout(location=9) in vec3 aGal;
+layout(location=10) in vec3 aGalPrev;
+layout(location=11) in vec2 aStar;   // size, seed
+uniform sampler2D uNoteTex;
+uniform int uTexW, uTexH, uPick;
+uniform float uTime, uPx, uPointSize, uRefDist, uDim, uShowNotes, uHover, uSel;
+out vec4 vColor;
+void main() {
+  int id = int(aNote + 0.5);
+  vec4 nt = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW), 0);
+  vec3 gcol = texelFetch(uNoteTex, ivec2(id % uTexW, id / uTexW + uTexH), 0).rgb;
+  float e, eg;
+  vec3 p = morph(aAnat, mix(aClusPrev, aClus, uClusMix), aGroupDir, 0.5, vec3(0.0), 0.0, e);
+  p = galaxy(p, mix(aGalPrev, aGal, uClusMix), aStar.y, vec3(0.0), eg);
+  gl_Position = uVP * vec4(p, 1.0);
+  float vis = smoothstep(0.18, 0.85, uGalaxy) * uShowNotes;
+  bool hot = (abs(aNote - uHover) < 0.5 || abs(aNote - uSel) < 0.5);
+  float size = uPx * aStar.x * (0.6 + 0.4 * uPointSize) * (uRefDist / max(gl_Position.w, 0.1)) * (hot ? 1.5 : 1.0);
+  if (uPick == 1) {
+    if (vis < 0.5 || nt.a < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 1.0; }
+    else { gl_PointSize = max(size * 0.55, 7.0); gl_Position.z -= 0.03 * gl_Position.w; }
+    int c = id + 1;
+    vColor = vec4(float(c & 255) / 255.0, float((c >> 8) & 255) / 255.0, float((c >> 16) & 255) / 255.0, 1.0);
+    return;
+  }
+  float I = vis * mix(uDim * 1.4, 1.0, nt.a) * (0.86 + 0.14 * sin(uTime * (0.9 + aStar.y * 2.0) + aStar.y * 60.0));
+  gl_PointSize = size;
+  vColor = vec4(mix(gcol, vec3(1.0), hot ? 0.35 : 0.0), I * (hot ? 1.5 : 1.0));
+}`;
+  const STAR_FS = `#version 300 es
+precision highp float;
+precision highp int;
+uniform int uPick;
+in vec4 vColor; out vec4 o;
+void main() {
+  vec2 c = gl_PointCoord - 0.5;
+  float d = length(c) * 2.0;
+  if (uPick == 1) { if (d > 1.0) discard; o = vColor; return; }
+  float core = exp(-d * d * 30.0);
+  float halo = exp(-d * d * 6.5) * 0.62 + exp(-d * d * 2.0) * 0.16;
+  vec3 col = vColor.rgb * (halo + core * 0.5) + vec3(1.0) * core * 1.15;
+  o = vec4(col * vColor.a * smoothstep(1.0, 0.72, d), 1.0);
+}`;
+  const FIELD_VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec4 aP;
+uniform mat4 uVP; uniform float uPx, uVis, uTime;
+out float vI;
+void main() {
+  gl_Position = uVP * vec4(aP.xyz, 1.0);
+  gl_PointSize = max(1.0, uPx * (0.55 + aP.w * 1.15));
+  vI = uVis * (0.16 + 0.84 * aP.w * aP.w) * (0.78 + 0.22 * sin(uTime * (0.4 + aP.w) + aP.w * 97.0));
+}`;
+  const FIELD_FS = `#version 300 es
+precision highp float; in float vI; out vec4 o;
+void main() { float d = length(gl_PointCoord - 0.5) * 2.0; float a = clamp(1.0 - d, 0.0, 1.0); o = vec4(vec3(0.80, 0.86, 1.0) * vI * a, 1.0); }`;
 
   const QUAD_VS = `#version 300 es
 layout(location=0) in vec2 aP; out vec2 vUv; void main() { vUv = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }`;
@@ -323,6 +408,8 @@ void main() {
     buf(3, aRand, 4); buf(4, aMeta, 4); buf(5, aGrow, 4); buf(6, aNote, 1);
     const bGdir = buf(7, gdirArr, 3, gl.DYNAMIC_DRAW);
     buf(8, anat.size, 1);
+    const galArr = new Float32Array(N * 3), galPrevArr = new Float32Array(N * 3);
+    const bGal = buf(9, galArr, 3, gl.DYNAMIC_DRAW), bGalPrev = buf(10, galPrevArr, 3, gl.DYNAMIC_DRAW);
 
     // links
     const linkPairs = [];
@@ -333,10 +420,37 @@ void main() {
     const lvao = gl.createVertexArray(); gl.bindVertexArray(lvao);
     buf(0, lAnat, 3); const blClus = buf(1, lClus, 3, gl.DYNAMIC_DRAW), blClusPrev = buf(2, lClusPrev, 3, gl.DYNAMIC_DRAW);
     buf(6, lNote, 1); const blGdir = buf(7, lGdir, 3, gl.DYNAMIC_DRAW);
+    const lGal = new Float32Array(NL * 3), lGalPrev = new Float32Array(NL * 3);
+    const blGal = buf(9, lGal, 3, gl.DYNAMIC_DRAW), blGalPrev = buf(10, lGalPrev, 3, gl.DYNAMIC_DRAW);
     // hot links (hovered / selected note) drawn from a small dynamic index buffer
     const hotIdx = gl.createBuffer(); let hotCount = 0;
     const linkStart = new Map(); // note -> list of first-vertex indices
     for (let v = 0; v < NL; v += 2) { for (const n of [linkPairs[v], linkPairs[v + 1]]) { if (!linkStart.has(n)) linkStart.set(n, []); linkStart.get(n).push(v); } }
+    gl.bindVertexArray(null);
+
+    // galaxy form: a star per note, hub-to-star spokes, and a background starfield
+    const degree = new Float32Array(NN); for (let i = 0; i < NN; i++) degree[i] = (notes[i].l || []).length;
+    const sClus = new Float32Array(NN * 3), sClusPrev = new Float32Array(NN * 3), sGal = new Float32Array(NN * 3), sGalPrev = new Float32Array(NN * 3);
+    const sNote = new Float32Array(NN), sGdir = new Float32Array(NN * 3), sStar = new Float32Array(NN * 2);
+    for (let n = 0; n < NN; n++) { sNote[n] = n; sStar[n * 2] = 3.0 + 1.9 * Math.sqrt(Math.min(degree[n], 25)); sStar[n * 2 + 1] = rnd(); }
+    const svao = gl.createVertexArray(); gl.bindVertexArray(svao);
+    buf(0, anchor, 3); const bsClus = buf(1, sClus, 3, gl.DYNAMIC_DRAW), bsClusPrev = buf(2, sClusPrev, 3, gl.DYNAMIC_DRAW);
+    buf(6, sNote, 1); const bsGdir = buf(7, sGdir, 3, gl.DYNAMIC_DRAW);
+    const bsGal = buf(9, sGal, 3, gl.DYNAMIC_DRAW), bsGalPrev = buf(10, sGalPrev, 3, gl.DYNAMIC_DRAW); const bsStar = buf(11, sStar, 2, gl.DYNAMIC_DRAW);
+    // spokes: 2 vertices per note (hub end, star end); attributes filled by layoutClusters
+    const kAnat = new Float32Array(NN * 6), kClus = new Float32Array(NN * 6), kClusPrev = new Float32Array(NN * 6), kGal = new Float32Array(NN * 6), kGalPrev = new Float32Array(NN * 6);
+    const kNote = new Float32Array(NN * 2), kGdir = new Float32Array(NN * 6);
+    for (let n = 0; n < NN; n++) { kNote[n * 2] = n; kNote[n * 2 + 1] = n; }
+    const kvao = gl.createVertexArray(); gl.bindVertexArray(kvao);
+    const bkAnat = buf(0, kAnat, 3, gl.DYNAMIC_DRAW), bkClus = buf(1, kClus, 3, gl.DYNAMIC_DRAW), bkClusPrev = buf(2, kClusPrev, 3, gl.DYNAMIC_DRAW);
+    buf(6, kNote, 1); const bkGdir = buf(7, kGdir, 3, gl.DYNAMIC_DRAW);
+    const bkGal = buf(9, kGal, 3, gl.DYNAMIC_DRAW), bkGalPrev = buf(10, kGalPrev, 3, gl.DYNAMIC_DRAW);
+    const NF = 4200, fArr = new Float32Array(NF * 4);
+    for (let i = 0; i < NF; i++) {
+      const u = rnd() * 2 - 1, ph = rnd() * 6.283185307, sq = Math.sqrt(1 - u * u), r = 7 + 11 * Math.pow(rnd(), 0.8);
+      fArr[i * 4] = r * sq * Math.cos(ph); fArr[i * 4 + 1] = r * u; fArr[i * 4 + 2] = r * sq * Math.sin(ph); fArr[i * 4 + 3] = Math.pow(rnd(), 2.2);
+    }
+    const fvao = gl.createVertexArray(); gl.bindVertexArray(fvao); buf(0, fArr, 4);
     gl.bindVertexArray(null);
 
     const quad = gl.createVertexArray(); gl.bindVertexArray(quad);
@@ -344,7 +458,7 @@ void main() {
 
     // ---------- per-note texture: rgb = group colour, a = lit ----------
     const TW = 256, TH = Math.max(1, Math.ceil(NN / TW));
-    const noteTexData = new Uint8Array(TW * TH * 4);
+    const noteTexData = new Uint8Array(TW * TH * 2 * 4);        // second half: galaxy (group) colours
     const noteTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, noteTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -353,6 +467,7 @@ void main() {
 
     // ---------- programs ----------
     const pPoint = program(gl, POINT_VS, POINT_FS), pLine = program(gl, LINE_VS, LINE_FS);
+    const pStar = program(gl, STAR_VS, STAR_FS), pField = program(gl, FIELD_VS, FIELD_FS);
     const pDown = program(gl, QUAD_VS, DOWN_FS), pBlur = program(gl, QUAD_VS, BLUR_FS), pComp = program(gl, QUAD_VS, COMP_FS);
 
     // ---------- render targets ----------
@@ -391,7 +506,7 @@ void main() {
 
     // ---------- state ----------
     const S = {
-      form: 0, formTarget: 0, spread: 0, spreadTarget: 0, clusMix: 1,
+      form: 0, formTarget: 0, spread: 0, spreadTarget: 0, clusMix: 1, galaxy: 0, galaxyTarget: 0, galaxyLin: 0,
       colorMode: 0, color: hexToRgb(opts.color || '#FF3B30'), colorTarget: hexToRgb(opts.color || '#FF3B30'),
       clusterBy: 'folder', showBody: 1, showNotes: 1, showLinks: 0, turning: 1, speed: 1, pointSize: 1, glow: 1,
       briBody: 1, briNotes: 1, dim: 0.05, hover: -1, sel: -1,
@@ -400,7 +515,7 @@ void main() {
     };
     const TARGET_Y = 0.10, FOV = 35 * Math.PI / 180, OMEGA = (2 * Math.PI) / 16;
     function fitDist() {
-      const th = Math.tan(FOV / 2), dh = (2.81 / 0.88) / (2 * th), dw = (1.62 / 0.86) / (2 * th * (cssW / cssH));
+      const gx = S.galaxy, th = Math.tan(FOV / 2), dh = (lerp(2.81, 3.05, gx) / 0.88) / (2 * th), dw = (lerp(1.62, 4.6, gx) / 0.86) / (2 * th * (cssW / cssH));
       return Math.max(dh, dw);
     }
     let baseDist = 4.92, zoom = 1, zoomTarget = 1;
@@ -470,7 +585,70 @@ void main() {
         }
       }
       for (let v = 0; v < NL; v++) { const n = linkPairs[v], g = list[keyOf[n]]; lClus[v * 3] = noteC[n * 3]; lClus[v * 3 + 1] = noteC[n * 3 + 1]; lClus[v * 3 + 2] = noteC[n * 3 + 2]; lGdir[v * 3] = g.dir[0]; lGdir[v * 3 + 1] = g.dir[1]; lGdir[v * 3 + 2] = g.dir[2]; }
-      if (!animate) { clusPrevArr.set(clusArr); lClusPrev.set(lClus); }
+      // ---- galaxy form: every group is a small spiral galaxy, every note a star in it ----
+      galPrevArr.set(galArr); lGalPrev.set(lGal); sGalPrev.set(sGal); sClusPrev.set(sClus); kGalPrev.set(kGal); kClusPrev.set(kClus);
+      const big = L > 24, GR = big ? [2.15, 1.2, 1.75] : [1.72, 0.96, 1.4];
+      const hue = (i) => { const h = (i * 137.508 + 200) % 360, f = (x) => { const k = (x + h / 30) % 12; return 0.6 - 0.38 * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return [f(0), f(8), f(4)]; };
+      const liveIdx = new Int32Array(G).fill(-1); live.forEach((g, i) => { liveIdx[g] = i; });
+      const members = live.map(() => []);
+      for (let n = 0; n < NN; n++) members[liveIdx[keyOf[n]]].push(n);
+      const starP = new Float32Array(NN * 3), hubOf = new Int32Array(NN);
+      live.forEach((g, i) => {
+        const Gp = list[g];
+        const y = L === 1 ? 0 : 1 - 2 * (i + 0.5) / L, r = Math.sqrt(Math.max(0, 1 - y * y)), ph = i * 2.399963229728653 + 1.9, k = L === 1 ? 0 : 0.8 + 0.2 * gr();
+        const c = [GR[0] * r * Math.cos(ph) * k, GR[1] * y * k + TARGET_Y, GR[2] * r * Math.sin(ph) * k];
+        const rad = Math.min(0.44, 0.11 + 0.047 * Math.cbrt(cnt[g])) * (big ? 0.6 : 1);
+        let nx = gr() - 0.5, ny = 0.35 + gr() * 0.5, nz = 0.5 + gr() * 0.6; const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
+        let ux = -nz, uz = nx; const ul = Math.hypot(ux, uz) || 1; ux /= ul; uz /= ul;
+        const vx = ny * uz, vy = nz * ux - nx * uz, vz = -ny * ux;
+        Gp.gc = c; Gp.gr = rad; Gp.gb = [ux, 0, uz, vx, vy, vz, nx, ny, nz];
+        Gp.arms = 2 + ((gr() * 2) | 0); Gp.twist = (gr() < 0.5 ? -1 : 1) * (2.5 + gr() * 1.7);
+        Gp.gcol = Gp.color ? hexToRgb(Gp.color) : hue(i);
+        // the best-linked note is the hub at the core; the rest spread through the disc, well-linked ones closer in
+        const m = members[i].slice().sort((a, b) => degree[b] - degree[a] || a - b);
+        Gp.hub = m[0]; Gp.top = m.slice(0, 3);
+        m.forEach((n, q) => {
+          let rr = 0, th = 0, h = 0;
+          if (q > 0) { rr = rad * (0.15 + 0.62 * Math.sqrt(q / m.length)) * (1 + 0.07 * clamp(nj[n * 3], -2, 2)); th = q * 2.399963229728653 + 0.35 * nj[n * 3 + 1]; h = nj[n * 3 + 2] * rad * 0.02; }
+          const cs = Math.cos(th) * rr, sn = Math.sin(th) * rr;
+          starP[n * 3] = c[0] + ux * cs + vx * sn + nx * h; starP[n * 3 + 1] = c[1] + vy * sn + ny * h; starP[n * 3 + 2] = c[2] + uz * cs + vz * sn + nz * h;
+          hubOf[n] = q < 40 ? m[0] : n;          // only the best-linked stars get a spoke to the hub
+        });
+      });
+      for (let i = 0; i < N; i++) {
+        const g = list[keyOf[noteOf[i]]], b = g.gb, c = g.gc, R_ = g.gr, kd = anat.kind[i];
+        const u1 = aRand[i * 4 + 1], u2 = aRand[i * 4 + 2], u3 = aRand[i * 4 + 3], g0 = pj[i * 3], g1 = pj[i * 3 + 1], g2 = pj[i * 3 + 2];
+        let rr, th, h;
+        if (kd === K.HAZE) { rr = R_ * 0.42 * Math.abs(g0); th = u1 * 6.283185307; h = g2 * R_ * 0.05; }                  // nebula glow round the core
+        else if (u1 < 0.14) { rr = R_ * 0.19 * Math.abs(g0); th = u3 * 6.283185307; h = g2 * R_ * 0.06; }                  // bulge
+        else {                                                                                                            // spiral arms
+          const t = Math.pow(u2, 0.8); rr = R_ * (0.14 + 1.36 * t) * (1 + 0.04 * g0);
+          th = Math.floor(u3 * g.arms) * 6.283185307 / g.arms + g.twist * Math.log(1 + 2.4 * t) + g1 * (0.09 + 0.2 * (1 - t)); h = g2 * R_ * 0.025;
+        }
+        const cs = Math.cos(th) * rr, sn = Math.sin(th) * rr;
+        galArr[i * 3] = c[0] + b[0] * cs + b[3] * sn + b[6] * h; galArr[i * 3 + 1] = c[1] + b[4] * sn + b[7] * h; galArr[i * 3 + 2] = c[2] + b[2] * cs + b[5] * sn + b[8] * h;
+      }
+      for (let v = 0; v < NL; v++) { const n = linkPairs[v]; lGal[v * 3] = starP[n * 3]; lGal[v * 3 + 1] = starP[n * 3 + 1]; lGal[v * 3 + 2] = starP[n * 3 + 2]; }
+      sGal.set(starP); sClus.set(noteC);
+      const G0 = TW * TH * 4;
+      for (let n = 0; n < NN; n++) {
+        const g = list[keyOf[n]], h = hubOf[n];
+        sGdir[n * 3] = g.dir[0]; sGdir[n * 3 + 1] = g.dir[1]; sGdir[n * 3 + 2] = g.dir[2];
+        for (let c = 0; c < 3; c++) {
+          kAnat[n * 6 + c] = anchor[h * 3 + c]; kAnat[n * 6 + 3 + c] = anchor[n * 3 + c];
+          kClus[n * 6 + c] = noteC[h * 3 + c]; kClus[n * 6 + 3 + c] = noteC[n * 3 + c];
+          kGal[n * 6 + c] = starP[h * 3 + c]; kGal[n * 6 + 3 + c] = starP[n * 3 + c];
+          kGdir[n * 6 + c] = g.dir[c]; kGdir[n * 6 + 3 + c] = g.dir[c];
+          noteTexData[G0 + n * 4 + c] = Math.round(g.gcol[c] * 255);
+        }
+        noteTexData[G0 + n * 4 + 3] = 255;
+      }
+      texDirty = true;
+      if (!animate) { clusPrevArr.set(clusArr); lClusPrev.set(lClus); galPrevArr.set(galArr); lGalPrev.set(lGal); sGalPrev.set(sGal); sClusPrev.set(sClus); kGalPrev.set(kGal); kClusPrev.set(kClus); }
+      const up = (b, a) => { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, a); };
+      up(bGal, galArr); up(bGalPrev, galPrevArr); up(blGal, lGal); up(blGalPrev, lGalPrev);
+      up(bsClus, sClus); up(bsClusPrev, sClusPrev); up(bsGdir, sGdir); up(bsGal, sGal); up(bsGalPrev, sGalPrev);
+      up(bkAnat, kAnat); up(bkClus, kClus); up(bkClusPrev, kClusPrev); up(bkGdir, kGdir); up(bkGal, kGal); up(bkGalPrev, kGalPrev);
       gl.bindBuffer(gl.ARRAY_BUFFER, bClus); gl.bufferSubData(gl.ARRAY_BUFFER, 0, clusArr);
       gl.bindBuffer(gl.ARRAY_BUFFER, bClusPrev); gl.bufferSubData(gl.ARRAY_BUFFER, 0, clusPrevArr);
       gl.bindBuffer(gl.ARRAY_BUFFER, bGdir); gl.bufferSubData(gl.ARRAY_BUFFER, 0, gdirArr);
@@ -478,7 +656,7 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, blClusPrev); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lClusPrev);
       gl.bindBuffer(gl.ARRAY_BUFFER, blGdir); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lGdir);
       S.clusMix = animate ? 0 : 1;
-      groups = list.filter((g) => g.count > 0); groups.keyOf = keyOf; groups.noteC = noteC;
+      groups = list.filter((g) => g.count > 0); groups.keyOf = keyOf; groups.noteC = noteC; groups.starP = starP;
     }
 
     // folder colours: shades around the area colour
@@ -529,6 +707,7 @@ void main() {
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noteTex); gl.uniform1i(P.u.uNoteTex, 0); gl.uniform1i(P.u.uTexW, TW);
       gl.uniform1i(P.u.uColorMode, S.colorMode); gl.uniform3fv(P.u.uColor, S.color);
       gl.uniform1f(P.u.uDim, S.dim); gl.uniform1f(P.u.uShowNotes, S.showNotes);
+      gl.uniform1f(P.u.uGalaxy, S.galaxy); gl.uniform1i(P.u.uTexH, TH);
     }
     function setPoint(pick) {
       const P = pPoint; gl.useProgram(P.p); setCommon(P);
@@ -539,6 +718,14 @@ void main() {
       gl.uniform1f(P.u.uShowBody, S.showBody); gl.uniform1f(P.u.uBriBody, S.briBody); gl.uniform1f(P.u.uBriNotes, S.briNotes);
       gl.uniform1f(P.u.uHover, S.hover); gl.uniform1f(P.u.uSel, S.sel); gl.uniform1f(P.u.uFiltered, filtered);
     }
+    function setStar(pick) {
+      const P = pStar; gl.useProgram(P.p); setCommon(P);
+      gl.uniform1i(P.u.uPick, pick ? 1 : 0); gl.uniform1f(P.u.uTime, S.time);
+      gl.uniform1f(P.u.uPx, 1.9 * dpr * Math.pow(cssH / 810, 0.85) * (pick ? 0.5 : 1));
+      gl.uniform1f(P.u.uPointSize, S.pointSize); gl.uniform1f(P.u.uRefDist, baseDist);
+      gl.uniform1f(P.u.uHover, S.hover); gl.uniform1f(P.u.uSel, S.sel);
+    }
+    const gEase = () => { const f = clamp((S.galaxy - 0.19) / 0.62, 0, 1); return f * f * f * (f * (f * 6 - 15) + 10); };
     function blit(P, src, dst, set) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, dst ? dst.f : null); gl.viewport(0, 0, dst ? dst.w : W, dst ? dst.h : H);
       gl.useProgram(P.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src.t); gl.uniform1i(P.u.uTex, 0);
@@ -547,7 +734,7 @@ void main() {
     function uploadTex() {
       for (let n = 0; n < NN; n++) noteTexData[n * 4 + 3] = Math.round(litCur[n] * 255);
       gl.bindTexture(gl.TEXTURE_2D, noteTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, TW, TH, 0, gl.RGBA, gl.UNSIGNED_BYTE, noteTexData);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, TW, TH * 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, noteTexData);
       texDirty = false;
     }
     const listeners = { frame: [], hover: [], click: [] };
@@ -561,6 +748,7 @@ void main() {
       // smoothing
       const kf = 1 - Math.exp(-dt * 14);
       S.form += (S.formTarget - S.form) * kf; S.spread += (S.spreadTarget - S.spread) * kf;
+      S.galaxy += clamp(S.galaxyTarget - S.galaxy, -dt / 2.6, dt / 2.6);
       if (S.clusMix < 1) S.clusMix = Math.min(1, S.clusMix + dt / 0.9);
       for (let c = 0; c < 3; c++) S.color[c] += (S.colorTarget[c] - S.color[c]) * (1 - Math.exp(-dt * 16));
       zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * 10));
@@ -582,12 +770,22 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, RT.scene.f); gl.viewport(0, 0, W, H);
       gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+      const gx = gEase();
+      if (S.galaxy > 0.01) {                         // starfield behind everything
+        gl.useProgram(pField.p); gl.uniformMatrix4fv(pField.u.uVP, false, VP);
+        gl.uniform1f(pField.u.uPx, 1.7 * dpr * Math.pow(cssH / 810, 0.85)); gl.uniform1f(pField.u.uVis, 0.95 * S.galaxy); gl.uniform1f(pField.u.uTime, S.time);
+        gl.bindVertexArray(fvao); gl.drawArrays(gl.POINTS, 0, NF);
+      }
       setPoint(false); gl.bindVertexArray(vao); gl.drawArrays(gl.POINTS, 0, N);
-      if (NL && (S.showLinks || hotCount)) {
-        const P = pLine; gl.useProgram(P.p); setCommon(P); gl.bindVertexArray(lvao);
-        if (S.showLinks) { gl.uniform1f(P.u.uAlpha, 0.055); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NL); }
+      const linkA = Math.max(S.showLinks ? 0.055 : 0, 0.032 * gx);
+      if (linkA > 0 || hotCount || gx > 0) {
+        const P = pLine; gl.useProgram(P.p); setCommon(P);
+        if (gx > 0) { gl.bindVertexArray(kvao); gl.uniform1f(P.u.uAlpha, 0.16 * gx); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NN * 2); }
+        gl.bindVertexArray(lvao);
+        if (NL && linkA > 0) { gl.uniform1f(P.u.uAlpha, linkA); gl.uniform1f(P.u.uHot, 0); gl.drawArrays(gl.LINES, 0, NL); }
         if (hotCount) { gl.uniform1f(P.u.uAlpha, 0.5); gl.uniform1f(P.u.uHot, 1); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hotIdx); gl.drawElements(gl.LINES, hotCount, gl.UNSIGNED_INT, 0); }
       }
+      if (S.galaxy > 0.01) { setStar(false); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
       gl.disable(gl.BLEND); gl.bindVertexArray(quad);
       // bloom
       let src = RT.scene;
@@ -619,7 +817,9 @@ void main() {
       gl.enable(gl.SCISSOR_TEST); gl.scissor(x0, y0, w, h);
       gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.disable(gl.BLEND);
-      setPoint(true); gl.bindVertexArray(vao); gl.drawArrays(gl.POINTS, 0, N); gl.bindVertexArray(null);
+      setPoint(true); gl.bindVertexArray(vao); gl.drawArrays(gl.POINTS, 0, N);
+      if (S.galaxy > 0.5) { setStar(true); gl.bindVertexArray(svao); gl.drawArrays(gl.POINTS, 0, NN); }
+      gl.bindVertexArray(null);
       gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pickBuf);
       gl.disable(gl.SCISSOR_TEST); gl.disable(gl.DEPTH_TEST); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       let best = -1, bd = 1e9;
@@ -691,6 +891,7 @@ void main() {
       on(ev, fn) { listeners[ev].push(fn); return api; },
       set(k, v) {
         if (k === 'form') S.formTarget = clamp(v, 0, 1); else if (k === 'spread') S.spreadTarget = clamp(v, 0, 1);
+        else if (k === 'galaxy') S.galaxyTarget = v ? 1 : 0;
         else S[k] = v;
       },
       setColor(hex) { S.colorTarget = hexToRgb(hex); },
@@ -704,7 +905,16 @@ void main() {
       setSelected(n) { S.sel = n == null ? -1 : n; setHot(); },
       setHover(n) { S.hover = n == null ? -1 : n; setHot(); },
       groups() { return groups; },
-      groupScreen(g) { return project(formPos(g.a, g.c, g.dir)); },
+      groupScreen(g) {
+        const p = formPos(g.a, g.c, g.dir), t = gEase();
+        return project(t > 0 && g.gc ? [lerp(p[0], g.gc[0], t), lerp(p[1], g.gc[1] + g.gr * 0.9 + 0.05, t), lerp(p[2], g.gc[2], t)] : p);
+      },
+      starScreen(n) {
+        const t = gEase(), sp = groups.starP, nc = groups.noteC;
+        const p = formPos([anchor[n * 3], anchor[n * 3 + 1], anchor[n * 3 + 2]], [nc[n * 3], nc[n * 3 + 1], nc[n * 3 + 2]], [0, 0, 0]);
+        return project([lerp(p[0], sp[n * 3], t), lerp(p[1], sp[n * 3 + 1], t), lerp(p[2], sp[n * 3 + 2], t)]);
+      },
+      galaxyEase: gEase,
       project,
       resetView() { zoomTarget = 1; S.pitch = 0; },
       replayIntro() { S.intro = 0; S.introDone = false; S.yaw = 0; },

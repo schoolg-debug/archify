@@ -2,7 +2,9 @@
 
 A single-page WebGL2 view of a notes collection drawn as a particle brain and nervous system.
 Every speck belongs to a note: areas of life map to regions of the brain, and the spine is a
-timeline (top = newest). No dependencies and no network requests at runtime.
+timeline (top = newest). The **Galaxy** button (or Space) morphs the same particles into one
+spiral galaxy per group, with a glowing star for every note and lines for its links.
+No dependencies and no network requests at runtime.
 
 ## Build
 
