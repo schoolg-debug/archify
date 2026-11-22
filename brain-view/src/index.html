@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex, nofollow">
+<title>Brain View</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl" tabindex="-1" aria-label="3D view of your notes as a brain and nervous system"></canvas>
+  <div id="labels"></div>
+  <div id="err"></div>
+
+  <div class="brand">
+    <div class="title">Brain View</div>
+    <div class="sub"><span id="nNotes">0</span> notes · <span id="nLinks">0</span> links</div>
+  </div>
+  <div class="search">
+    <input id="q" type="text" placeholder="Search your brain…" autocomplete="off" spellcheck="false" aria-label="Search your brain">
+    <div id="results" role="listbox"></div>
+  </div>
+  <button id="viewBtn" class="on" aria-expanded="true" aria-controls="view">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5h6.2M12.4 5H14M2 11h1.6M7.8 11H14"/><circle cx="10.3" cy="5" r="1.9" fill="currentColor" stroke="none"/><circle cx="5.7" cy="11" r="1.9" fill="currentColor" stroke="none"/></svg>
+    View
+  </button>
+
+  <aside id="areas" aria-label="Areas of your life">
+    <div class="h">AREAS OF YOUR LIFE</div>
+    <div id="legend">Everything in your color</div>
+    <div id="areaList"></div>
+    <div class="rule"></div>
+    <div class="hints">Hover a speck to see the note · Click to open<br>Drag to turn · Scroll to zoom<br><b>Spine = timeline</b> <i>(top = newest)</i></div>
+    <button id="showAll">Show everything</button>
+  </aside>
+
+  <aside id="view" aria-label="View settings">
+    <div class="head"><div class="t">VIEW</div><button class="x" id="viewClose" aria-label="Close view settings">×</button></div>
+    <section>
+      <div class="lab">FORM</div>
+      <div class="row first"><span>Anatomy</span><span class="v">Clusters</span></div>
+      <input type="range" id="sForm" min="0" max="1000" value="0" aria-label="Anatomy to clusters">
+      <div class="row sl"><span>Spread</span><span class="v" id="vSpread">0%</span></div>
+      <input type="range" id="sSpread" min="0" max="100" value="0" aria-label="Spread">
+    </section>
+    <div class="sep" style="margin-top:18px"></div>
+    <section>
+      <div class="lab">GROUPS</div>
+      <div class="row sel first"><span>Clusters by</span>
+        <select id="selCluster" aria-label="Clusters by"><option value="folder">Folder</option><option value="area">Area</option><option value="month">Month</option><option value="source">Source</option></select></div>
+      <div class="row sel"><span>Color by</span>
+        <select id="selColor" aria-label="Color by"><option value="one">One color</option><option value="time">Time</option><option value="area">Area</option><option value="folder">Folder</option></select></div>
+      <div class="row col"><span>Your color</span><span class="v hex" id="vHex">#FF3B30</span></div>
+      <div class="swatches" id="swatches"></div>
+    </section>
+    <div class="sep"></div>
+    <section>
+      <div class="lab">SHOW</div>
+      <div class="show">
+        <div class="row"><span>Body</span><button class="tg on" data-k="showBody" role="switch" aria-checked="true" aria-label="Body"></button></div>
+        <div class="row"><span>Notes</span><button class="tg on" data-k="showNotes" role="switch" aria-checked="true" aria-label="Notes"></button></div>
+        <div class="row"><span>Labels</span><button class="tg" data-k="labels" role="switch" aria-checked="false" aria-label="Labels"></button></div>
+        <div class="row"><span>All links</span><button class="tg" data-k="showLinks" role="switch" aria-checked="false" aria-label="All links"></button></div>
+      </div>
+    </section>
+    <div class="sep" style="margin-top:12px"></div>
+    <section>
+      <div class="lab">MOTION</div>
+      <div class="row first" style="margin-top:7.4px"><span>Turning</span><button class="tg on" data-k="turning" role="switch" aria-checked="true" aria-label="Turning"></button></div>
+      <div class="row"><span>Speed</span><span class="v" id="vSpeed">100%</span></div>
+      <input type="range" id="sSpeed" min="0" max="300" value="100" aria-label="Turning speed">
+    </section>
+    <div class="sep" style="margin-top:18px"></div>
+    <section>
+      <div class="lab">DRAWN</div>
+      <div class="row first"><span>Point size</span><span class="v" id="vPoint">100%</span></div>
+      <input type="range" id="sPoint" min="40" max="240" value="100" aria-label="Point size">
+      <div class="row sl"><span>Glow</span><span class="v" id="vGlow">100%</span></div>
+      <input type="range" id="sGlow" min="0" max="300" value="100" aria-label="Glow">
+    </section>
+    <div class="sep" style="margin-top:18px"></div>
+    <section>
+      <div class="lab">BRIGHTNESS</div>
+      <div class="row first"><span>Body</span><span class="v" id="vBriBody">100%</span></div>
+      <input type="range" id="sBriBody" min="0" max="300" value="100" aria-label="Body brightness">
+      <div class="row sl"><span>Notes</span><span class="v" id="vBriNotes">100%</span></div>
+      <input type="range" id="sBriNotes" min="0" max="300" value="100" aria-label="Notes brightness">
+      <div class="row sl"><span>Faded</span><span class="v" id="vDim">5%</span></div>
+      <input type="range" id="sDim" min="0" max="40" value="5" aria-label="Brightness of everything outside the current filter">
+    </section>
+  </aside>
+
+  <div id="tip" role="tooltip"></div>
+  <aside id="note" aria-live="polite"></aside>
+</div>
+<script id="brain-data" type="application/json">__DATA__</script>
+<script>
+/*__JS__*/
+</script>
+</body>
+</html>
